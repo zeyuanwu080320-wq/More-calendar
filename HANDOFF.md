@@ -3,7 +3,7 @@
 > 面向对象：**完全没有上下文的新 AI 工程师**。  
 > 最后核对时间：2026-11-03 22:40（Asia/Hong_Kong）  
 > 当前版本：**2.0.0（build 3）**  
-> 项目根目录：`/Users/duishangque/Desktop/编程/SchoolEventInbox_V2.0`
+> 项目根目录：`<repo>`
 
 ---
 
@@ -526,7 +526,7 @@ January 22 - Olena
 ### 9.2 构建 App
 
 ```bash
-cd "/Users/duishangque/Desktop/编程/SchoolEventInbox_V2.0/02_Developer_Source"
+cd "<repo>/02_Developer_Source"
 ./Scripts/build_app.sh
 ```
 
@@ -535,7 +535,7 @@ cd "/Users/duishangque/Desktop/编程/SchoolEventInbox_V2.0/02_Developer_Source"
 ### 9.3 直接 SwiftPM
 
 ```bash
-cd "/Users/duishangque/Desktop/编程/SchoolEventInbox_V2.0/02_Developer_Source"
+cd "<repo>/02_Developer_Source"
 SDK="/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
 CLANG_MODULE_CACHE_PATH="$PWD/.build/clangcache" \
 swift build --disable-sandbox --sdk "$SDK" \
@@ -569,7 +569,7 @@ plutil -lint SchoolEventInbox.xcodeproj/project.pbxproj
 ### 9.6 打包交付 zip
 
 ```bash
-cd "/Users/duishangque/Desktop/编程/SchoolEventInbox_V2.0"
+cd "<repo>"
 rm -f "MoreCalendar_v2.0.0_macOS.zip"
 ditto -c -k --norsrc --noextattr --keepParent \
   "build/More calendar.app" \
@@ -753,10 +753,10 @@ find 02_Developer_Source -name 'xcuserdata' -type d -prune -exec rm -rf {} +
 
 ```text
 App:
-  /Users/duishangque/Desktop/编程/SchoolEventInbox_V2.0/build/More calendar.app
+  <repo>/build/More calendar.app
 
 源码:
-  /Users/duishangque/Desktop/编程/SchoolEventInbox_V2.0/02_Developer_Source
+  <repo>/02_Developer_Source
 
 发布包（构建产物，不入库）:
   MoreCalendar_v2.0.0_macOS.zip  → 通过 GitHub Release 分发

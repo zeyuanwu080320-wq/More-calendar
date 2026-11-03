@@ -18,7 +18,7 @@
 ## 直接运行
 
 ```bash
-cd /Users/duishangque/Desktop/编程/SchoolEventInbox/02_Developer_Source
+cd <repo>/02_Developer_Source
 open ../build/SchoolEventInbox.app
 ```
 
