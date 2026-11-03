@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>2.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
@@ -34,5 +34,9 @@
 	<string>仅限本机个人使用</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>用于把你逐条确认后的学校事件写成 Apple 提醒事项。不会在后台读取或监听提醒事项。</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>用于把你逐条确认后的学校事件写成 Apple 提醒事项。</string>
 </dict>
 </plist>

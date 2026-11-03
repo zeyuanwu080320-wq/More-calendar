@@ -38,7 +38,7 @@ struct FooterBar: View {
                             .font(.callout.weight(.medium))
                             .foregroundStyle(writeSummaryColor)
                     } else {
-                        Text(L10n.t("已确认事件会按类型写入独立日历，失败时回退到默认日历", "Confirmed events go to per-type calendars; falls back to the default calendar") + (model.calendarName.isEmpty ? "" : "：" + model.calendarName))
+                        Text(model.writeTargetHint + (model.calendarName.isEmpty ? "" : "：" + model.calendarName))
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
@@ -81,20 +81,36 @@ struct FooterBar: View {
                 .controlSize(.regular)
                 .help("导出脱敏后的本地 JSONL 日志，不包含邮件原文、标题、地点或敏感字段")
 
+                // Write target picker. Segmented and compact so it reads as
+                // part of the write action rather than as a new settings area.
+                Picker("", selection: Binding(
+                    get: { model.writeTarget },
+                    set: { model.selectTarget($0) }
+                )) {
+                    ForEach(WriteTarget.allCases) { target in
+                        Text(target.shortTitle).tag(target)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.regular)
+                .frame(width: 150)
+                .help(L10n.t("选择写入 Apple 日历或 Apple 提醒事项", "Choose whether to write to Apple Calendar or Apple Reminders"))
+
                 Button {
                     model.writeToCalendar()
                 } label: {
                     if model.isWriting {
                         ProgressView().controlSize(.small)
                     } else {
-                        Label("写入 Apple 日历", systemImage: "calendar.badge.plus")
+                        Label(model.writeActionTitle, systemImage: model.writeActionSymbol)
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .disabled(!model.canTapWrite)
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
-                .help("⌘⇧↩ 写入已确认事件")
+                .help(L10n.t("⌘⇧↩ 写入已确认事件", "⌘⇧↩ Write confirmed events"))
             }
         }
         .padding(.horizontal, 16)

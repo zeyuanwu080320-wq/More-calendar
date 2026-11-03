@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SchoolEventInboxCore
+import SwiftUI
 import UniformTypeIdentifiers
 
 enum WorkStatus: Equatable {
@@ -13,6 +14,32 @@ enum WorkStatus: Equatable {
         case .idle: return L10n.eventStatus(.idle)
         case .ocr: return L10n.eventStatus(.ocr)
         case .deepSeek: return L10n.eventStatus(.deepSeek)
+        }
+    }
+}
+
+/// Where confirmed drafts are written.
+///
+/// Lives in the app target because it is a UI choice, not a model concept: the
+/// providers themselves only know their own `TargetProviderID`.
+enum WriteTarget: String, CaseIterable, Identifiable, Sendable {
+    case calendar
+    case reminders
+
+    var id: String { rawValue }
+
+    /// Compact label for the segmented picker in the footer.
+    var shortTitle: String {
+        switch self {
+        case .calendar: return L10n.t("日历", "Calendar")
+        case .reminders: return L10n.t("提醒事项", "Reminders")
+        }
+    }
+
+    var providerID: TargetProviderID {
+        switch self {
+        case .calendar: return .appleCalendar
+        case .reminders: return .appleReminders
         }
     }
 }
@@ -51,13 +78,39 @@ final class AppModel: ObservableObject {
     private let ocrService: OCRService
     private let deepSeek: DeepSeekClient
     private let keychain: APIKeyStore
-    private let calendar: CalendarService
+    private let calendarTarget = AppleCalendarProvider()
+    private let remindersTarget = AppleRemindersProvider()
     private let logService: LogService?
+
+    /// Where the write button sends confirmed drafts. Switching only swaps the
+    /// resolved provider; drafts, parsed results and the UI stay untouched.
+    @Published private(set) var writeTarget: WriteTarget = .calendar
+
+    /// Which input source the left pane is showing. `email` keeps the V1.0
+    /// pipeline (body + screenshot OCR); `text` never touches OCR.
+    @Published private(set) var inputSource: InputSource = .email
+
+    /// Free-form text buffer. Deliberately separate from `emailText` so
+    /// switching sources never destroys what the user typed.
+    @Published var plainText: String = ""
+
+    /// Persisted across launches, following the same pattern as
+    /// `LanguageManager`: the wrapper owns the `UserDefaults` write, while the
+    /// `@Published` mirrors above are what drive SwiftUI.
+    @AppStorage("SchoolEventInbox.writeTarget") private var storedWriteTarget: String = WriteTarget.calendar.rawValue
+    @AppStorage("SchoolEventInbox.inputSource") private var storedInputSource: String = InputSource.email.rawValue
+
+    /// The provider for the currently selected write target. Every write, read
+    /// and permission call in this class goes through it, never through a
+    /// concrete provider type.
+    private var target: any TargetProvider {
+        writeTarget == .calendar ? calendarTarget : remindersTarget
+    }
 
     private var parseStartedAt: Date?
     private var inputTypeForParse: String = "text"
     private var imageCountForParse = 0
-    private var parsedTextSnapshot: String?
+    private var parsedInputSnapshot: String?
     private var parseTask: Task<Void, Never>?
     private var pasteMonitor: Any?
 
@@ -65,18 +118,22 @@ final class AppModel: ObservableObject {
         ocrService: OCRService = OCRService(),
         deepSeek: DeepSeekClient = DeepSeekService(),
         keychain: APIKeyStore = KeychainService(),
-        calendar: CalendarService? = nil,
         logService: LogService? = try? LogService()
     ) {
-        let calendar = calendar ?? CalendarService()
         self.ocrService = ocrService
         self.deepSeek = deepSeek
         self.keychain = keychain
-        self.calendar = calendar
         self.logService = logService
-        self.calendarState = calendar.authorizationState
-        self.calendarName = calendar.defaultCalendarName ?? ""
-        calendar.titleLanguage = LanguageManager.shared.isEnglish ? .english : .chinese
+        // Restore the previous session's choices before reading any permission
+        // state, so the footer and the write button describe the target the
+        // user actually left selected.
+        self.writeTarget = WriteTarget(rawValue: storedWriteTarget) ?? .calendar
+        self.inputSource = InputSource(rawValue: storedInputSource) ?? .email
+        let language: ManagedCalendarLanguage = LanguageManager.shared.isEnglish ? .english : .chinese
+        calendarTarget.titleLanguage = language
+        remindersTarget.titleLanguage = language
+        self.calendarState = target.authorizationState
+        self.calendarName = target.targetName ?? ""
         self.logPath = logService?.path ?? ""
         refreshAPIKeyStatus()
         refreshStats()
@@ -116,27 +173,82 @@ final class AppModel: ObservableObject {
         }
     }
 
-    var calendarService: CalendarService { calendar }
+    /// The active target, narrowed to the management capabilities when it
+    /// supports them. Reminders deliberately exposes none — a reminder has no
+    /// time slot to shift — so the panel is unavailable there instead of
+    /// showing something misleading.
+    var managedEventProvider: (any ManagedEventProvider)? {
+        target as? any ManagedEventProvider
+    }
+
+    /// Switches the write target and re-reads its permission state, so the
+    /// footer prompt and the write button always describe the active target.
+    func selectTarget(_ newTarget: WriteTarget) {
+        guard newTarget != writeTarget else { return }
+        writeTarget = newTarget
+        storedWriteTarget = newTarget.rawValue
+        lastWriteSummary = ""
+        lastWriteDetail = ""
+        errorMessage = nil
+        notice = nil
+        refreshCalendarStatus()
+    }
+
+    /// Title of the primary write action, following the selected target.
+    var writeActionTitle: String {
+        switch writeTarget {
+        case .calendar: return L10n.t("写入 Apple 日历", "Write to Apple Calendar")
+        case .reminders: return L10n.t("写入 Apple 提醒事项", "Write to Apple Reminders")
+        }
+    }
+
+    var writeActionSymbol: String {
+        switch writeTarget {
+        case .calendar: return "calendar.badge.plus"
+        case .reminders: return "checklist"
+        }
+    }
+
+    /// One-line explanation of where confirmed events land.
+    var writeTargetHint: String {
+        switch writeTarget {
+        case .calendar:
+            return L10n.t("已确认事件会按类型写入独立日历，失败时回退到默认日历",
+                          "Confirmed events go to per-type calendars; falls back to the default calendar")
+        case .reminders:
+            return L10n.t("已确认事件会按类型写入独立提醒事项列表，到期时间取开始时间，失败时回退到默认列表",
+                          "Confirmed events go to per-type reminder lists, due at the start time; falls back to the default list")
+        }
+    }
 
     /// Keeps the per-type calendar titles in the current UI language.
     ///
-    /// Renaming a calendar needs full calendar access; `CalendarService` skips
-    /// silently when access is missing, so this never blocks the UI.
+    /// Renaming a calendar needs full calendar access; providers skip silently
+    /// when access is missing, so this never blocks the UI.
     @discardableResult
     func syncCalendarLanguage() -> Int {
         let language: ManagedCalendarLanguage = LanguageManager.shared.isEnglish ? .english : .chinese
-        return calendar.syncManagedCalendarTitles(to: language)
+        calendarTarget.titleLanguage = language
+        remindersTarget.titleLanguage = language
+        return calendarTarget.syncLocalizedTitles(to: language) + remindersTarget.syncLocalizedTitles(to: language)
     }
 
     var hasInput: Bool {
-        !emailText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty
+        InputComposer.hasInput(
+            source: inputSource,
+            emailBody: emailText,
+            plainText: plainText,
+            imageCount: images.count
+        )
     }
 
+    /// Value recorded in the privacy log. "text" is the one value V2.0 adds.
     var currentInputType: String {
-        let hasText = !emailText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if hasText && !images.isEmpty { return "mixed" }
-        if !images.isEmpty { return "image" }
-        return "text"
+        InputComposer.logInputType(
+            source: inputSource,
+            emailBody: emailText,
+            imageCount: images.count
+        )
     }
 
     var unresolvedConflictCount: Int {
@@ -160,39 +272,67 @@ final class AppModel: ObservableObject {
     var calendarPermissionPrompt: String? {
         switch calendarState {
         case .denied:
-            return "日历权限被拒绝。写入按钮已禁用，请到系统设置 > 隐私与安全性 > 日历中授权。"
+            switch writeTarget {
+            case .calendar:
+                return "日历权限被拒绝。写入按钮已禁用，请到系统设置 > 隐私与安全性 > 日历中授权。"
+            case .reminders:
+                return "提醒事项权限被拒绝。写入按钮已禁用，请到系统设置 > 隐私与安全性 > 提醒事项中授权。"
+            }
         case .restricted:
-            return "日历权限受系统限制，无法写入。"
+            switch writeTarget {
+            case .calendar:
+                return "日历权限受系统限制，无法写入。"
+            case .reminders:
+                return "提醒事项权限受系统限制，无法写入。"
+            }
         case .unknown:
-            return "无法读取日历权限状态，写入按钮已禁用。"
+            switch writeTarget {
+            case .calendar:
+                return "无法读取日历权限状态，写入按钮已禁用。"
+            case .reminders:
+                return "无法读取提醒事项权限状态，写入按钮已禁用。"
+            }
         case .notDetermined:
-            return "首次写入时会请求完整日历权限。"
+            switch writeTarget {
+            case .calendar:
+                return "首次写入时会请求完整日历权限。"
+            case .reminders:
+                return "首次写入时会请求完整提醒事项权限。"
+            }
         case .writeOnly:
-            return "当前只有“仅写入”日历权限，无法检查时间冲突。请升级为完整访问后再写入。"
+            switch writeTarget {
+            case .calendar:
+                return "当前只有“仅写入”日历权限，无法检查时间冲突。请升级为完整访问后再写入。"
+            case .reminders:
+                return "当前只有“仅写入”提醒事项权限。请升级为完整访问后再写入。"
+            }
         case .fullAccess:
             return nil
         }
     }
 
     func refreshCalendarStatus() {
-        calendarState = calendar.authorizationState
-        calendarName = calendar.defaultCalendarName ?? ""
+        calendarState = target.authorizationState
+        calendarName = target.targetName ?? ""
     }
 
     func requestCalendarAccess() {
         guard calendarState == .notDetermined || calendarState == .writeOnly else { return }
         Task {
             do {
-                _ = try await calendar.requestFullAccess()
+                _ = try await target.requestAccess()
             } catch {
-                errorMessage = "请求日历权限失败：\(shortError(error))"
+                errorMessage = writeTarget == .calendar
+                    ? "请求日历权限失败：\(shortError(error))"
+                    : "请求提醒事项权限失败：\(shortError(error))"
             }
             refreshCalendarStatus()
         }
     }
 
     func openCalendarPrivacySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
+        let pane = writeTarget == .calendar ? "Privacy_Calendars" : "Privacy_Reminders"
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
             NSWorkspace.shared.open(url)
         }
     }
@@ -274,8 +414,24 @@ final class AppModel: ObservableObject {
 
     func inputDidChange() {
         guard parseSucceeded, !isParsing else { return }
-        guard emailText != parsedTextSnapshot else { return }
+        guard currentInputSnapshot() != parsedInputSnapshot else { return }
         notice = "输入已修改，当前卡片仍基于上一次解析。请重新解析后再写入。"
+    }
+
+    /// Switches the input source. Parsed cards are kept (same policy as editing
+    /// text) and a re-parse hint is raised instead of discarding results.
+    func selectInputSource(_ newSource: InputSource) {
+        guard newSource != inputSource else { return }
+        inputSource = newSource
+        storedInputSource = newSource.rawValue
+        errorMessage = nil
+        inputDidChange()
+    }
+
+    /// Identifies "what was parsed", including which source it came from, so
+    /// switching sources cannot masquerade as an unchanged input.
+    private func currentInputSnapshot() -> String {
+        "\(inputSource.rawValue)|\(inputSource == .email ? emailText : plainText)"
     }
 
     #if DEBUG
@@ -319,7 +475,7 @@ final class AppModel: ObservableObject {
         ]
         drafts = DraftFactory.makeDrafts(from: events)
         parseSucceeded = true
-        parsedTextSnapshot = emailText
+        parsedInputSnapshot = currentInputSnapshot()
         notice = "演示数据：4 条候选事件，请逐条核对后再写入"
         drafts[1].conflicts = [
             CalendarConflict(
@@ -339,7 +495,9 @@ final class AppModel: ObservableObject {
     func parse() {
         guard !isParsing else { return }
         guard hasInput else {
-            errorMessage = "请先粘贴邮件正文、截图，或拖入图片"
+            errorMessage = inputSource == .email
+                ? "请先粘贴邮件正文、截图，或拖入图片"
+                : "请先输入要解析的文本"
             return
         }
         parseTask?.cancel()
@@ -347,8 +505,9 @@ final class AppModel: ObservableObject {
         isParsing = true
         parseStartedAt = Date()
         inputTypeForParse = currentInputType
-        imageCountForParse = images.count
-        workStatus = images.isEmpty ? .deepSeek : .ocr
+        imageCountForParse = inputSource == .email ? images.count : 0
+        // The text source never enters the OCR state: no images are consulted.
+        workStatus = (inputSource == .email && !images.isEmpty) ? .ocr : .deepSeek
 
         parseTask = Task { [weak self] in
             await self?.performParse()
@@ -362,18 +521,16 @@ final class AppModel: ObservableObject {
             parseTask = nil
         }
 
-        var textParts: [String] = []
-        let trimmedEmail = emailText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedEmail.isEmpty {
-            textParts.append("【邮件正文】\n\(trimmedEmail)")
-        }
-
-        if !images.isEmpty {
+        // OCR is scoped to the email source. In text mode `images` is never
+        // read at all, so "skip OCR" holds even if screenshots from the email
+        // tab are still buffered in memory.
+        var ocrSections: [InputComposer.OCRSection] = []
+        if inputSource == .email && !images.isEmpty {
             workStatus = .ocr
             for (index, image) in images.enumerated() {
                 do {
                     let result = try await ocrService.recognize(imageData: image.data)
-                    textParts.append("【图片 \(index + 1) 本地 OCR：\(image.name)】\n\(result.text)")
+                    ocrSections.append(InputComposer.OCRSection(name: image.name, text: result.text))
                 } catch {
                     failParse(
                         message: "第 \(index + 1) 张图片 OCR 失败：\(shortError(error))",
@@ -417,7 +574,14 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let combinedText = textParts.joined(separator: "\n\n")
+        // Single assembly point: the text source ignores `ocrSections` by
+        // construction, so the two sources can never bleed into each other.
+        let combinedText = InputComposer.compose(
+            source: inputSource,
+            emailBody: emailText,
+            plainText: plainText,
+            ocrSections: ocrSections
+        )
         do {
             let response = try await deepSeek.parse(text: combinedText, systemPrompt: prompt, apiKey: apiKey)
             if let error = response.error, !error.isEmpty {
@@ -431,7 +595,7 @@ final class AppModel: ObservableObject {
             }
             drafts = DraftFactory.makeDrafts(from: events)
             parseSucceeded = true
-            parsedTextSnapshot = emailText
+            parsedInputSnapshot = currentInputSnapshot()
             notice = "已识别 \(drafts.count) 条候选事件，请逐条核对后再写入"
             errorMessage = nil
             appendParseLog(
@@ -455,7 +619,7 @@ final class AppModel: ObservableObject {
         let duration = parseStartedAt.map { Int(Date().timeIntervalSince($0) * 1_000) }
         let record = LogRecord(
             kind: "parse",
-            inputType: normalizedLogInputType(inputTypeForParse),
+            inputType: inputTypeForParse,
             imageCount: imageCountForParse,
             eventCount: eventCount,
             eventTypes: eventTypes,
@@ -464,12 +628,6 @@ final class AppModel: ObservableObject {
             modifiedFields: []
         )
         appendLog(record)
-    }
-
-    /// The log schema uses email/image only. Mixed input is represented as
-    /// email; imageCount still records that images were involved.
-    private func normalizedLogInputType(_ raw: String) -> String {
-        raw == "image" ? "image" : "email"
     }
 
     // MARK: - Confirmation and writing
@@ -501,17 +659,23 @@ final class AppModel: ObservableObject {
 
             if calendarState == .notDetermined || calendarState == .writeOnly {
                 do {
-                    let granted = try await calendar.requestFullAccess()
+                    let granted = try await target.requestAccess()
                     refreshCalendarStatus()
                     if !granted || !calendarState.isGranted {
-                        lastWriteSummary = calendarState == .writeOnly
-                            ? "仅获得写入权限，无法检查冲突，未写入任何事件"
-                            : "日历权限未授予，未写入任何事件"
+                        if writeTarget == .calendar {
+                            lastWriteSummary = calendarState == .writeOnly
+                                ? "仅获得写入权限，无法检查冲突，未写入任何事件"
+                                : "日历权限未授予，未写入任何事件"
+                        } else {
+                            lastWriteSummary = "提醒事项权限未授予，未写入任何事件"
+                        }
                         return
                     }
                 } catch {
                     refreshCalendarStatus()
-                    lastWriteSummary = "请求日历权限失败，未写入任何事件"
+                    lastWriteSummary = writeTarget == .calendar
+                        ? "请求日历权限失败，未写入任何事件"
+                        : "请求提醒事项权限失败，未写入任何事件"
                     lastWriteDetail = shortError(error)
                     return
                 }
@@ -524,7 +688,7 @@ final class AppModel: ObservableObject {
             var failureMessages: [String] = []
             var attemptedTypes: [String] = []
             var modifiedFields = Set<String>()
-            calendar.resetRoutingNotice()
+            target.resetRoutingNotice()
 
             for id in targets.map(\.id) {
                 guard let index = drafts.firstIndex(where: { $0.id == id }), !drafts[index].isWritten else { continue }
@@ -540,7 +704,7 @@ final class AppModel: ObservableObject {
                 }
 
                 do {
-                    let conflicts = try calendar.findConflicts(for: draft)
+                    let conflicts = try target.findConflicts(for: draft)
                     draft.conflicts = conflicts
                     if !conflicts.isEmpty {
                         conflictCount += 1
@@ -550,7 +714,9 @@ final class AppModel: ObservableObject {
                         drafts[index] = draft
                         continue
                     }
-                    try calendar.write(draft)
+                    // One draft per call keeps the per-card conflict/skip/
+                    // failure accounting identical to V1.0.
+                    try target.saveEvents([draft])
                     draft.isWritten = true
                     written += 1
                     drafts[index] = draft
@@ -558,7 +724,7 @@ final class AppModel: ObservableObject {
                     failureCount += 1
                     failureMessages.append("\(draft.title)：\(shortError(error))")
                     drafts[index] = draft
-                    if let calendarError = error as? CalendarServiceError,
+                    if let calendarError = error as? TargetProviderError,
                        calendarError == .accessDenied {
                         refreshCalendarStatus()
                     }
@@ -577,7 +743,7 @@ final class AppModel: ObservableObject {
             // Calendar routing is best-effort: when the per-type calendar could
             // not be created, the event still lands in the default calendar and
             // the reason is surfaced here instead of failing the write.
-            if let routingNotice = calendar.routingNotice {
+            if let routingNotice = target.routingNotice {
                 lastWriteDetail = [lastWriteDetail, routingNotice]
                     .filter { !$0.isEmpty }
                     .joined(separator: "\n")
@@ -589,7 +755,7 @@ final class AppModel: ObservableObject {
             appendLog(
                 LogRecord(
                     kind: "write",
-                    inputType: normalizedLogInputType(currentInputType),
+                    inputType: currentInputType,
                     eventCount: attemptedTypes.count,
                     eventTypes: attemptedTypes,
                     error: failureCount > 0 ? "partial_failure" : nil,
@@ -609,7 +775,7 @@ final class AppModel: ObservableObject {
         appendLog(
             LogRecord(
                 kind: "missed_feedback",
-                inputType: normalizedLogInputType(currentInputType),
+                inputType: currentInputType,
                 imageCount: images.count,
                 eventCount: drafts.count,
                 eventTypes: drafts.map { $0.type.rawValue }

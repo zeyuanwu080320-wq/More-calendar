@@ -43,13 +43,18 @@ APP_VIEWS = [
     "APIKeySheet.swift",
     "ManagedEventsView.swift",
 ]
-CORE_MODELS = ["EventType.swift", "ParsedEvent.swift", "EventDraft.swift"]
+CORE_MODELS = ["EventType.swift", "ParsedEvent.swift", "EventDraft.swift", "ManagedEvent.swift", "InputSource.swift"]
 CORE_SERVICES = [
     "DeepSeekService.swift",
     "OCRService.swift",
     "KeychainService.swift",
-    "CalendarService.swift",
     "LogService.swift",
+]
+CORE_PROVIDERS = [
+    "TargetProvider.swift",
+    "ManagedEventMetadata.swift",
+    "AppleCalendarProvider.swift",
+    "AppleRemindersProvider.swift",
 ]
 CORE_UTILITIES = ["FlexibleDateParser.swift"]
 
@@ -99,6 +104,7 @@ def main() -> None:
     core_group = oid("group:Core")
     models_group = oid("group:Models")
     services_group = oid("group:Services")
+    providers_group = oid("group:Providers")
     utilities_group = oid("group:Utilities")
     support_group = oid("group:Support")
 
@@ -112,6 +118,7 @@ def main() -> None:
     view_refs: list[str] = []
     model_refs: list[str] = []
     service_refs: list[str] = []
+    provider_refs: list[str] = []
     utility_refs: list[str] = []
 
     def add(key: str, path: str, bucket: list[str]) -> None:
@@ -128,6 +135,8 @@ def main() -> None:
         add("Models/" + name, name, model_refs)
     for name in CORE_SERVICES:
         add("Services/" + name, name, service_refs)
+    for name in CORE_PROVIDERS:
+        add("Providers/" + name, name, provider_refs)
     for name in CORE_UTILITIES:
         add("Utilities/" + name, name, utility_refs)
 
@@ -147,9 +156,10 @@ def main() -> None:
         group("App", "SchoolEventInbox", app_refs + [views_group, resources_group], path="SchoolEventInbox"),
         group("Views", "Views", view_refs, path="Views"),
         group("Resources", "Resources", [prompt_ref, localization_ref], path="Resources"),
-        group("Core", "SchoolEventInboxCore", [models_group, services_group, utilities_group], path="SchoolEventInboxCore"),
+        group("Core", "SchoolEventInboxCore", [models_group, services_group, providers_group, utilities_group], path="SchoolEventInboxCore"),
         group("Models", "Models", model_refs, path="Models"),
         group("Services", "Services", service_refs, path="Services"),
+        group("Providers", "Providers", provider_refs, path="Providers"),
         group("Utilities", "Utilities", utility_refs, path="Utilities"),
         group("Support", "Support", [info_ref], path="Support"),
     ]
@@ -162,6 +172,8 @@ def main() -> None:
         oid("buildfile:Models/" + name) for name in CORE_MODELS
     ] + [
         oid("buildfile:Services/" + name) for name in CORE_SERVICES
+    ] + [
+        oid("buildfile:Providers/" + name) for name in CORE_PROVIDERS
     ] + [
         oid("buildfile:Utilities/" + name) for name in CORE_UTILITIES
     ]

@@ -55,7 +55,10 @@ struct ContentView: View {
                     // like the menu item and the sheet header.
                     Text(L10n.t("管理事件", "Managed Events"))
                 }
-                .help(L10n.t("管理事件", "Managed Events"))
+                // Reminders have no time slot to browse, delete or shift, so
+                // this entry is unavailable while that target is selected.
+                .disabled(model.managedEventProvider == nil)
+                .help(L10n.t("管理本工具创建的事件", "Manage events created by this app"))
 
                 Button {
                     language.toggle()
@@ -75,7 +78,11 @@ struct ContentView: View {
             APIKeySheet(model: model)
         }
         .sheet(isPresented: $model.showManagedEvents) {
-            ManagedEventsView(calendar: model.calendarService)
+            // Apple Calendar always supports management, so this branch always
+            // renders — the panel looks and behaves exactly as in V1.0.
+            if let provider = model.managedEventProvider {
+                ManagedEventsView(provider: provider)
+            }
         }
         .alert("清空本地日志？", isPresented: $model.showClearLogConfirmation) {
             Button("清空", role: .destructive) {

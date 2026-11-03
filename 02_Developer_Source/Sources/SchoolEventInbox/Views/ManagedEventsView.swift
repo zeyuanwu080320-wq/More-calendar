@@ -3,7 +3,9 @@ import SchoolEventInboxCore
 import SwiftUI
 
 struct ManagedEventsView: View {
-    let calendar: CalendarService
+    /// The panel only needs the management capabilities, not the whole
+    /// provider surface.
+    let provider: any ManagedEventProvider
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var language: LanguageManager
 
@@ -382,7 +384,7 @@ struct ManagedEventsView: View {
     }
 
     private func refresh() {
-        permissionState = calendar.authorizationState
+        permissionState = provider.authorizationState
         guard permissionState == .fullAccess else {
             events = []
             selected.removeAll()
@@ -391,7 +393,7 @@ struct ManagedEventsView: View {
         isLoading = true
         errorMessage = nil
         do {
-            events = try calendar.fetchManagedEvents()
+            events = try provider.fetchManagedEvents()
             selected = selected.intersection(Set(events.map(\.id)))
         } catch {
             errorMessage = error.localizedDescription
@@ -402,7 +404,7 @@ struct ManagedEventsView: View {
     private func requestAccess() {
         Task {
             do {
-                _ = try await calendar.requestFullAccess()
+                _ = try await provider.requestAccess()
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -415,7 +417,7 @@ struct ManagedEventsView: View {
         guard !selected.isEmpty else { return }
         let ids = selected.sorted()
         do {
-            let result = try calendar.deleteManagedEvents(ids: ids)
+            let result = try provider.deleteManagedEvents(ids: ids)
             selected.removeAll()
             statusMessage = result.failed == 0
                 ? "已删除 \(result.deleted) 条事件"
@@ -428,7 +430,7 @@ struct ManagedEventsView: View {
 
     private func delete(_ event: ManagedEvent) {
         do {
-            try calendar.deleteManagedEvent(id: event.id)
+            try provider.deleteManagedEvent(id: event.id)
             selected.remove(event.id)
             events.removeAll { $0.id == event.id }
             statusMessage = "已删除 1 条事件"
@@ -438,7 +440,7 @@ struct ManagedEventsView: View {
     }
 
     private func clearAll() {        do {
-            let count = try calendar.deleteAllManagedEvents()
+            let count = try provider.deleteAllManagedEvents()
             events = []
             selected.removeAll()
             statusMessage = "已删除 \(count) 条事件"
@@ -455,7 +457,7 @@ struct ManagedEventsView: View {
         }
         guard interval != 0 else { return }
         do {
-            let result = try calendar.shiftManagedEvents(ids: Array(selected), by: interval)
+            let result = try provider.shiftManagedEvents(ids: Array(selected), by: interval)
             statusMessage = "成功平移 \(result.shifted) 条，\(result.conflicts) 条因冲突失败"
             if result.failed > 0 {
                 statusMessage = (statusMessage ?? "") + "，\(result.failed) 条失败"
