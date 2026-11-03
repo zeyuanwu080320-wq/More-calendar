@@ -1,0 +1,53 @@
+# ---------------------------------------------------------------------------
+# More calendar — 仓库忽略规则 / repository ignore rules
+# ---------------------------------------------------------------------------
+
+# --- 构建产物 / Build artifacts -------------------------------------------
+build/
+.build/
+02_Developer_Source/build/
+02_Developer_Source/.build/
+.swiftpm/
+*.o
+*.dSYM
+
+# --- 本地备份与归档 / Local archives --------------------------------------
+# 源码与旧版本备份，体积大且属于个人归档，不进入版本库
+03_Backup_Archives/
+
+# --- 发布产物 / Release artifacts -----------------------------------------
+# 可重新构建的二进制包；GitHub Release 单独上传
+MoreCalendar_v*.zip
+01_User_Delivery/*.zip
+
+# --- 日志与运行时数据 / Logs and runtime data -----------------------------
+# 自测日志、应用日志、导出数据。可能含本机路径或用户数据
+*.log
+*.jsonl
+*.csv
+02_Developer_Source/build/
+
+# --- 密钥与凭证 / Secrets --------------------------------------------------
+# 本项目的 API Key 只存 macOS Keychain，绝不应出现在仓库里
+.env
+.env.*
+*.key
+*.pem
+*.p12
+secrets*
+*_secret*
+!*.example
+
+# --- macOS / Xcode ---------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+
+# --- 编辑器 / Editors ------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~

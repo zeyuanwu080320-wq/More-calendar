@@ -1,0 +1,80 @@
+More calendar - User Guide (English)
+Chinese guide: 使用说明.txt
+Version 1.0.0
+
+Two setup steps are required:
+  A. Save your DeepSeek API key - see section 3
+  B. Grant "Full Access" to Calendars (not "Write Only") - see section 4
+
+1. Installation
+1. Unzip More calendar.zip.
+2. Drag More calendar.app into the "Applications" folder.
+3. Double-click to open. The tool runs locally, does not upload images, and does not listen in the background.
+
+2. If macOS blocks the first launch
+1. Open System Settings > Privacy & Security.
+2. In the Security section, find More calendar and click "Open Anyway".
+3. If it is still blocked, right-click the app > Open, then confirm again.
+4. This app uses a local ad-hoc signature and is not notarized by Apple. This is expected for a local personal tool.
+
+3. Configure the DeepSeek API key
+1. On first use, enter your own DeepSeek API key (not your school account password).
+2. Click the key icon at the top-right, paste the key, and click "Save to Keychain".
+3. The key is stored only in the macOS Keychain. It is not written to source code, logs, or exports, and it is never displayed.
+4. If macOS shows a Keychain access prompt, choose "Always Allow". If the key is still unreadable, save it once again.
+
+4. Important: grant Full Access for the first calendar write
+1. When you click "Write to Apple Calendar" for the first time, macOS asks for calendar permission.
+2. You must grant "Full Access"; do not choose "Write Only".
+3. The app must read existing events in the same time range to detect conflicts. Write-only access cannot do that.
+4. If you accidentally chose Write Only, the write button will be disabled. Go to System Settings > Privacy & Security > Calendars and change the access level, or click "Upgrade to Full Access" at the bottom of the app.
+
+5. Usage and shortcuts
+1. Paste the Outlook email body on the left, press Command-V to paste a screenshot, or drag in a .png / .jpg file.
+2. Click "Parse" or press Command-Return to run local OCR and DeepSeek extraction.
+3. Review every candidate card on the right: type, title, start/end time, all-day flag, location, evidence, and ambiguity notes.
+4. deadline / appointment / exam require confirmation. Ordinary activities are also selected for confirmation by default.
+5. Click "Write to Apple Calendar" or press Command-Shift-Return. If the button is disabled, the shortcut does nothing. Conflicts are skipped by default; enable "Write anyway" on a card to write that conflicting event.
+6. Use "Export Last 30" at the bottom to export redacted JSONL logs. Logs do not contain email bodies, titles, locations, image paths, email addresses, student IDs, national IDs, or phone numbers. Redaction is applied both when writing and when exporting.
+7. "Clear Logs" asks for confirmation and deletes only the local log.jsonl file; no other file is removed.
+
+Note: events are routed into a separate Apple Calendar per type, so colours distinguish them:
+
+| Type | Calendar written to | Colour |
+|---|---|---|
+| exam | More Calendar - 考试 | red |
+| birthday | More Calendar - 生日 | purple |
+| deadline | More Calendar - 截止 | orange |
+| appointment | More Calendar - 预约 | blue |
+| activity / other | More Calendar - 活动 | green |
+
+- These calendars are created automatically the first time that type is written. They all carry the `More Calendar - ` prefix and never touch your existing calendars.
+- Calendar names follow the UI language: "More Calendar - 考试" in Chinese, "More Calendar - Exam" in English. Renaming needs full calendar access and is skipped silently on failure.
+- If the system does not allow creating a calendar (for example, insufficient permission), the event falls back to your default calendar and the footer says so.
+- Deleting and batch-shifting still work: the managed panel identifies events by the note tag, so it works across calendars.
+
+6. Privacy
+- Images are processed in memory for OCR and are not stored on disk by this app.
+- Only the email body and OCR text are sent to DeepSeek; image binaries are not sent.
+- Logs contain only counts, event types, modified field names, short error types, and timing.
+- The tool does not claim that nothing will be missed. Review every card yourself.
+
+7. Requirements
+- macOS 15 or later.
+- Network access to the DeepSeek API.
+- Full Apple Calendar access to check conflicts and write events.
+
+
+8. Managed events
+1. Click the "Managed Events" button at the top-right of the window.
+2. Only events whose notes contain [SchoolEventInbox-Managed] or [Managed by SchoolEventInbox] are shown. Private events added manually are never exposed.
+3. Delete a single event. Recurring events (for example birthdays) remove all future occurrences.
+4. Select several events, then click "Delete Selected" at the bottom and confirm: only the checked events are removed, everything else is kept. Recurring events again lose all future occurrences.
+5. "Clear all" removes every event created by this app (not just the checked ones) and asks for confirmation, so prefer "Delete Selected" for routine cleanup.
+6. Select multiple events and use "Batch shift" to move them by +1 hour, -1 hour, +1 day, -1 day, +1 week, or a custom number of hours/minutes.
+7. Recurring events cannot be batch-shifted. Skipped conflicts open a "Batch shift conflicts" sheet that names each moved event and the event it collided with, instead of only a count.
+
+9. Birthday, all-day and language
+1. Birthday cards hide the end time and force all-day. Events written to Apple Calendar repeat yearly.
+2. With All-day enabled, start and end show date-only controls; disabling it restores time selection.
+3. Click "中/EN" at the top-right to switch the UI language. English mode localizes buttons and prompts.
