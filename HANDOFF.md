@@ -1,8 +1,8 @@
 # More calendar — 项目交接文档（HANDOFF）
 
 > 面向对象：**完全没有上下文的新 AI 工程师**。  
-> 最后核对时间：2026-11-03 21:20（Asia/Hong_Kong）  
-> 当前版本：**2.0.0（build 2）**  
+> 最后核对时间：2026-11-03 22:40（Asia/Hong_Kong）  
+> 当前版本：**2.0.0（build 3）**  
 > 项目根目录：`/Users/duishangque/Desktop/编程/SchoolEventInbox_V2.0`
 
 ---
@@ -13,17 +13,18 @@
 |---|---|
 | 是什么 | macOS 本地应用：邮件/截图/纯文本 → DeepSeek 抽取 → 人工逐条确认 → 写入 Apple 日历或提醒事项 |
 | 版本 | 2.0.0（build 2） |
-| 架构 | 写入选 `TargetProvider` 协议；EventKit 只存在于两个 Provider 文件里 |
-| 自测 | **129 passed, 0 failed** |
+| 架构 | 写入选 `TargetProvider` 协议；EventKit 只存在于两个 Provider 文件里，Google 走 REST |
+| 自测 | **200 passed, 0 failed** |
 | 构建 | `02_Developer_Source/Scripts/build_app.sh` → `build/More calendar.app` |
 | 仓库 | `https://github.com/zeyuanwu080320-wq/More-calendar.git`，发布分支 `main`，tag `v2.0.0` |
 | 不做 | OAuth、后台监听邮箱、云端存储、未经确认的写入 |
 
-**V2.0 相比 V1.0 只做了三件事**（外加版本号）：
+**V2.0 相比 V1.0 做了四件事**（外加版本号）：
 
-1. 写入侧从写死 EventKit 的 `CalendarService`，改为 `TargetProvider` 协议 + 两个 Provider。
+1. 写入侧从写死 EventKit 的 `CalendarService`，改为 `TargetProvider` 协议 + 多个 Provider。
 2. 新增 **Apple 提醒事项** 作为第二个写入目标。
 3. 新增 **纯文本输入**（跳过 OCR），并让「输入来源 / 写入目标」跨启动记忆。
+4. 新增 **Google 日历**（OAuth 2.0 PKCE + loopback），并已由用户真机验收写入成功。
 
 > 如果只读一段：先看 §4 架构 与 §12 Google Calendar 接入指南。
 
@@ -143,7 +144,8 @@ SchoolEventInbox_V2.0/
 │   │   └── make_icon.swift
 │   ├── SchoolEventInbox.xcodeproj/     ← 生成物；本机没有 xcodebuild
 │   ├── AppIcon.icns / AppIcon.iconset/ / icon.png / icon_adjusted.png
-│   ├── README.md / TEST_REPORT.md / TODO.md / User_Guide_EN.txt
+│   ├── README.md / TEST_REPORT.md / TODO.md
+│   ├── 使用说明.txt / User_Guide.txt        ← 随 Release zip 分发的用户手册
 │   └── build/                          ← 自测日志
 ├── 03_Backup_Archives/
 │   ├── MoreCalendar_v1.0_Source_Backup.zip
@@ -210,6 +212,7 @@ public protocol ManagedEventProvider: TargetProvider {
 |---|---|---|
 | `AppleCalendarProvider` | `Providers/AppleCalendarProvider.swift` | `ManagedEventProvider` |
 | `AppleRemindersProvider` | `Providers/AppleRemindersProvider.swift` | `TargetProvider`（**仅此**） |
+| `GoogleCalendarProvider` | `Providers/Google/GoogleCalendarProvider.swift` | `ManagedEventProvider` |
 | `ManagedEventMetadata` | `Providers/ManagedEventMetadata.swift` | 不遵守协议，纯命名/标签工具 |
 | 未来的 `GoogleCalendarProvider` | — | 见 §12 |
 
@@ -547,7 +550,7 @@ swift build --disable-sandbox --sdk "$SDK" \
 
 ```bash
 ./Scripts/run_selftest.sh
-# RESULT: 129 passed, 0 failed
+# RESULT: 200 passed, 0 failed
 ```
 
 - 测试是**无依赖可执行程序**（本机无 XCTest），不是 XCTest。
@@ -641,9 +644,10 @@ find 02_Developer_Source -name 'xcuserdata' -type d -prune -exec rm -rf {} +
 
 ---
 
-## 12. 下一步：Google Calendar 接入指南
+## 12. Google Calendar 接入（已实现）
 
-> 这是 V2.0 之后的主线。以下不是待办清单的猜想要点，而是**现有架构已经为你准备好的接口**与**必须自己解决的外部问题**。
+> 以下是最终落地的形态。与最初计划的差异：协议已改为 async、采用「单日历 + colorId」、
+> 用系统浏览器而非 ASWebAuthenticationSession；原因都写在对应小节里。
 
 ### 12.1 必须先解决的外部问题
 
@@ -702,6 +706,32 @@ find 02_Developer_Source -name 'xcuserdata' -type d -prune -exec rm -rf {} +
 - `InputComposer` / 解析链路：Google 只影响写入侧。
 - 自测数量只增不减；`generate_xcodeproj.py` 的文件清单要同步。
 
+### 12.7 已实现的形态与已知限制
+
+**已实现**（用户真机验收通过：写入成功、颜色正确、落在选定日历）：
+
+- `GoogleOAuthManager`：PKCE(S256) + loopback 随机端口 + 系统浏览器；refresh_token 存 Keychain
+- `GoogleAPIClient`：401 自动刷新一次、限流不静默重试、分页
+- `GoogleCalendarProvider`：单日历 + colorId 分色；托管标记双写 description 与 extendedProperties
+- 循环事件删除按系列（先 GET 查 `recurringEventId`，再删父事件）
+
+**踩过的坑，不要重犯**：
+
+1. **路径不能二次编码**。`appendingPathComponent` 会把 `%40` 变成 `%2540`，
+   日历 id 形如 `name@gmail.com` 时必然 404。必须用 `percentEncodedPath` 精确编码一次。
+2. **redirect_uri 不要加路径**。注册值是 `http://localhost`，官方 loopback 示例也不带路径。
+3. **「未连接」不等于「系统权限被拒」**。Google 的 401/notAuthorized 必须映射成
+   `authorizationRequired`，否则会把用户引去改系统设置。
+4. **冲突预检不得阻断写入**。它是提示性能力，失败时按「无冲突」继续。
+5. **时区是日历时区问题**。载荷发的是 `14:00+08:00`，网页按日历时区渲染；
+   若用户日历时区是美东，会显示 01:00——不是数据错误。
+
+**尚未做的**：
+
+- Google 侧批量平移不做冲突预检（`conflicts` 恒为 0）
+- 只支持单个 Google 账号
+- Google 的 `deleteManagedEvents` 会逐条 GET 解析系列，条目多时较慢
+
 ---
 
 ## 13. 新工程师建议阅读顺序
@@ -742,4 +772,4 @@ Release 文案:
 
 **一句话交接：**
 
-> 版本 **2.0.0**。写入侧已抽象为 `TargetProvider`（管理能力另拆 `ManagedEventProvider`），现有两个实现是 `AppleCalendarProvider` 与 `AppleRemindersProvider`；EventKit 不得离开 `Providers/`。输入侧新增纯文本来源，组装逻辑集中在 `InputComposer`，纯文本模式结构性跳过 OCR。托管标签与 `More Calendar - ` 前缀是历史数据的唯一锚点，任何情况下都不要改。129 项自测全绿，用户已完成真机端到端验收。下一个目标是 Google Calendar：照着 §12 的映射与顺序做，不要碰解析链路。
+> 版本 **2.0.0**。写入侧已抽象为 `TargetProvider`（管理能力另拆 `ManagedEventProvider`），现有三个实现：`AppleCalendarProvider`、`AppleRemindersProvider`、`GoogleCalendarProvider`；EventKit 不得离开 `Providers/`，网络只在 `Providers/Google/`。输入侧新增纯文本来源，组装逻辑集中在 `InputComposer`，纯文本模式结构性跳过 OCR。托管标签与 `More Calendar - ` 前缀是历史数据的唯一锚点，任何情况下都不要改。129 项自测全绿，用户已完成真机端到端验收。下一个目标是 Google Calendar：照着 §12 的映射与顺序做，不要碰解析链路。

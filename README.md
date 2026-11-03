@@ -36,7 +36,8 @@
 | **标签分类** | 事件类型：截止 / 预约 / 考试 / 生日 / 活动 / 其他 |
 | **按类型分日历** | 每种类型写入独立的 Apple 日历，**颜色一眼可辨**：考试=红、生日=紫、截止=橙、预约=蓝、活动=绿 |
 | **按类型分提醒事项** | 同为每种类型建独立列表；到期时间取开始时间，全天/生日只写日期并每年重复 |
-| **两种落点** | 一键在 Apple 日历与 Apple 提醒事项之间切换写入目标 |
+| **三种落点** | 一键在 Apple 日历、Apple 提醒事项与 Google 日历之间切换写入目标 |
+| **Google 日历** | 写入你选定的那个日历，事件颜色仍按类型区分；需自备 OAuth 凭据 |
 | **冲突检测** | 写入前检查时间重叠，默认跳过；也可在卡片上勾选"冲突仍写入" |
 | **全天与生日** | 全天事件只显示日期；生日强制全天并设为**每年重复** |
 | **批量平移** | 勾选多条统一 `+1 小时 / -1 小时 / +1 天 / -1 天 / +1 周` 或自定义分钟数，冲突会逐条告诉你**是谁撞了谁** |
@@ -54,6 +55,7 @@
 - 一个 **DeepSeek API Key**（自备，按量计费）
 - **完整日历访问权限**（不是"仅写入"——本工具需要在写入前读取同时间段的事件来判断冲突）
 - 选择写入提醒事项时，还需要 **完整提醒事项访问权限**
+- Google 日历需要自备 OAuth 凭据 `google_client_secret.json`（配置步骤见 `User_Guide.txt`）
 - 编译需要 **Command Line Tools**（Swift 6.x）；**不需要完整 Xcode**
 
 ### 准备工作（两步，缺一不可）
@@ -149,7 +151,8 @@ Images never leave the machine: OCR runs on Apple's Vision framework, and only *
 | **Typed events** | deadline / appointment / exam / birthday / activity / other |
 | **Per-type calendars** | Each type lands in its own Apple Calendar, **colour-coded**: exam = red, birthday = purple, deadline = orange, appointment = blue, activity = green |
 | **Per-type reminder lists** | The same split for Apple Reminders; the due date is the start time, all-day/birthdays use a date-only due date and repeat yearly |
-| **Two destinations** | Switch the write target between Apple Calendar and Apple Reminders in one click |
+| **Three destinations** | Switch the write target between Apple Calendar, Apple Reminders and Google Calendar in one click |
+| **Google Calendar** | Writes into the one calendar you pick, still colour-coded by type; bring your own OAuth credential |
 | **Conflict detection** | Checks overlaps before writing; skipped by default, with an opt-in "write anyway" per card |
 | **All-day & birthdays** | All-day events show date-only pickers; birthdays are all-day and repeat yearly |
 | **Batch shift** | Move several events by ±1h / ±1d / +1w or a custom offset, and see **exactly which event collided with which** |
@@ -167,6 +170,7 @@ Images never leave the machine: OCR runs on Apple's Vision framework, and only *
 - A **DeepSeek API key** (bring your own, pay-per-use)
 - **Full Calendar access** (not "Write Only" — conflicts can only be detected by reading existing events)
 - **Full Reminders access** when writing to Apple Reminders
+- Google Calendar needs your own OAuth credential (`google_client_secret.json`; see `User_Guide.txt`)
 - **Command Line Tools** with Swift 6.x to build; full Xcode is **not** required
 
 ### Setup (both steps required)

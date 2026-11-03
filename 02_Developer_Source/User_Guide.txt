@@ -1,0 +1,187 @@
+More calendar v2.0.0 - User Guide (English)
+========================================================================
+
+1. What it is
+------------------------------------------------------------------------
+A local macOS tool that turns school emails, screenshots, or a block of
+plain text into calendar events or reminders. Always three steps:
+
+  1. Paste  - email body, screenshots, or plain text
+  2. Review - DeepSeek proposes events; you confirm and edit each one
+  3. Write  - nothing lands until you press Write. Nothing is automatic.
+
+Images never leave your machine: OCR runs on Apple's Vision framework and
+only text is sent to DeepSeek. Plain Text mode skips OCR entirely.
+
+
+2. Install
+------------------------------------------------------------------------
+1. Unzip MoreCalendar_v2.0.0_macOS.zip
+2. Drag "More calendar.app" into /Applications
+3. Double-click to open
+
+If macOS blocks the first launch:
+  - System Settings > Privacy & Security > "Open Anyway"
+  - or right-click the app > Open, then confirm
+  - The app is ad-hoc signed and not notarized by Apple; this is expected.
+
+
+3. First-time setup: DeepSeek API key
+------------------------------------------------------------------------
+1. Click the key icon at the top-right and paste your own DeepSeek API key
+2. Click "Save to Keychain"
+3. The key lives only in the macOS Keychain: never in code, logs, or the UI
+4. If macOS asks for Keychain access, choose "Always Allow"
+
+
+4. Input modes (two, switched at the top of the left pane)
+------------------------------------------------------------------------
+4.1 Email / Images
+    - Paste the Outlook email body
+    - Drop screenshots, or click the image area and press Cmd-V
+    - Images are OCR'd locally; only the text is sent to DeepSeek
+
+4.2 Plain Text
+    - Type or paste any text (chat notices, forwarded announcements, ...)
+    - No OCR and no images; the image area is hidden in this mode
+
+4.3 Switching and memory
+    - Both buffers are kept; switching never discards what you typed
+    - The last used input mode is remembered across launches
+
+
+5. Write targets (three, switched at the bottom-right)
+------------------------------------------------------------------------
+  +--------------+---------------------------------------------------+
+  | Apple        | Events go to five per-type calendars, colour-coded:|
+  | Calendar     | exam=red birthday=purple deadline=orange          |
+  |              | appointment=blue activity=green                   |
+  +--------------+---------------------------------------------------+
+  | Apple        | Same split as reminder lists; the due date is the |
+  | Reminders    | start time, all-day/birthdays use a date-only due |
+  |              | date, birthdays repeat yearly. No conflict check  |
+  |              | and no batch shift (reminders have no time axis). |
+  +--------------+---------------------------------------------------+
+  | Google       | Writes into ONE calendar you pick in the dropdown;|
+  | Calendar     | event colours still distinguish the types.        |
+  +--------------+---------------------------------------------------+
+
+The write button text and the footer hint follow the selected target.
+The last used write target is remembered across launches.
+
+
+6. Google Calendar setup (required, read this first)
+------------------------------------------------------------------------
+Google Calendar needs OAuth, and the OAuth client credential must be
+provided by you. The app ships no credential and never bundles one.
+
+6.1 Create the credential
+    1. Open https://console.cloud.google.com/
+    2. Create or select a project
+    3. APIs & Services > Library > enable "Google Calendar API"
+    4. APIs & Services > OAuth consent screen
+         - User type: External
+         - Fill in app name and contact email
+         - Add these scopes:
+             https://www.googleapis.com/auth/calendar.events
+             https://www.googleapis.com/auth/calendar.readonly
+         - Add your own Gmail address under "Test users"
+    5. APIs & Services > Credentials > Create credentials > OAuth client ID
+         - Application type MUST be "Desktop app"
+         - Download the JSON
+    6. Rename the downloaded file to google_client_secret.json
+
+6.2 Put it at this exact path
+    ~/Library/Application Support/More calendar/google_client_secret.json
+
+    In a terminal:
+      mkdir -p "$HOME/Library/Application Support/More calendar"
+      cp ~/Downloads/google_client_secret.json \
+         "$HOME/Library/Application Support/More calendar/google_client_secret.json"
+
+    Note: the copy under 02_Developer_Source/Support/ is only a version
+    backup. The app never reads it at runtime.
+
+6.3 Connect
+    1. Restart the app and switch the target to "Google"
+    2. Click "Connect Google"; your default browser opens the consent page
+    3. After consent, a calendar dropdown appears, defaulting to primary
+    4. Pick another calendar if you like; the choice is remembered
+
+6.4 Sharing with a friend
+    If a friend uses YOUR credential, their Gmail address must be added to
+    "OAuth consent screen > Test users" in the same Google Cloud project,
+    otherwise they get access_denied (app not verified). Limit: 100 users.
+
+    Cleaner alternative: have them follow 6.1 and create their own
+    credential, so quotas stay independent.
+
+6.5 Time zone caveat (easy to misread)
+    The Google web UI renders events in the CALENDAR's own time zone.
+    If your Google calendar is set to US Eastern while you type 14:00
+    Hong Kong time, the web view shows 01:00 - the same instant, shown
+    twice. Fix: Google Calendar > Settings > Time zone -> (GMT+08:00).
+
+
+7. Managing written events
+------------------------------------------------------------------------
+"Managed Events" (Cmd-Shift-M) lists only events this tool created, and
+lets you delete or batch-shift them.
+
+  - Works for both Apple Calendar and Google Calendar events
+  - Disabled while the target is Reminders (no time axis to shift)
+  - "Delete Selected" removes only checked rows; "Clear all" is the nuke
+  - Recurring events: Apple removes future occurrences, Google deletes the
+    whole series (no stray instance next year)
+
+
+8. Permissions
+------------------------------------------------------------------------
+  - Apple Calendar: Full Access is required. Do not choose "Write Only",
+    otherwise conflicts cannot be detected.
+  - Apple Reminders: granted on first write, on demand
+  - Google: only calendar.events + calendar.readonly; no permission to
+    create or delete calendars
+
+
+9. Privacy
+------------------------------------------------------------------------
+  - Images are OCR'd in memory only; never uploaded, never written to disk
+  - Only text is sent to DeepSeek
+  - The API key and the Google refresh token are two separate Keychain items
+  - The Google client secret is not bundled; it is read from 6.2 only
+  - Local logs store counts and types only, with a redaction pass on export
+
+
+10. Troubleshooting
+------------------------------------------------------------------------
+Q1. "Google target not found (404): POST /calendars/.../events"
+    Usually a stale calendar id or a disabled API. Verify the file from 6.2
+    is current and that Google Calendar API is enabled. If it persists,
+    export the log (Q4).
+
+Q2. 403 / insufficientPermissions after connecting
+    Scopes added later do not apply to an already issued token.
+    Quit the app, then run:
+      security delete-generic-password -s local.duishangque.SchoolEventInbox -a google-refresh-token
+    Reopen the app and click "Connect Google" again.
+
+Q3. Event times are off by hours
+    See 6.5: it is the Google calendar's time zone setting, not bad data.
+
+Q4. Sending diagnostics
+    Click "Export last 30" in the footer, or run:
+      grep -E '"kind":"(google_diag|google_auth)"' \
+        "$HOME/Library/Application Support/SchoolEventInbox/log.jsonl" | tail -20
+    Logs are redacted and never contain tokens.
+
+Q5. "Managed Events" is greyed out
+    Expected while the target is Reminders.
+
+
+Shortcuts
+------------------------------------------------------------------------
+  Cmd-Return      Parse (works regardless of which field has focus)
+  Cmd-Shift-Return Write confirmed events
+  Cmd-Shift-M     Managed Events
+  Cmd-R           Parse (menu equivalent)
