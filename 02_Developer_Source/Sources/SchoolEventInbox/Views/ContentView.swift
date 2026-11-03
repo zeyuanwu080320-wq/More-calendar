@@ -65,7 +65,7 @@ struct ContentView: View {
                     // Rename the per-type Apple calendars to the new language so
                     // the Calendar sidebar matches the app. No-ops silently when
                     // full calendar access is missing.
-                    model.syncCalendarLanguage()
+                    Task { await model.syncCalendarLanguage() }
                 } label: {
                     Text(language.language.shortLabel)
                         .font(.caption.weight(.semibold))

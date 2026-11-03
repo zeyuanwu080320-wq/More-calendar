@@ -46,6 +46,9 @@ struct SelfTest {
         harness.section("Google 凭据加载")
         runGoogleCredentialTests(harness)
 
+        harness.section("Google OAuth / 映射 / 401 重试")
+        await runGoogleOAuthTests(harness)
+
         harness.section("日期/时区/歧义")
         runDateTests(harness)
 
@@ -539,6 +542,208 @@ struct SelfTest {
         h.equal(InputComposer.logInputType(source: .email, emailBody: "x", imageCount: 2), "email", "混合输入仍记为 email")
     }
 
+    /// PKCE / 授权 URL / 回调解析 / DTO 映射 / 401 自动重试。
+    private static func runGoogleOAuthTests(_ h: Harness) async {
+        // RFC 7636 Appendix B 的官方测试向量：sha256 实现错了这里一定挂。
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        h.equal(
+            GooglePKCE.challenge(for: verifier),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "PKCE S256 与 RFC 7636 向量一致"
+        )
+
+        let pkce = GooglePKCE.make()
+        h.check(pkce.verifier.count >= 43 && pkce.verifier.count <= 128, "verifier 长度在 43…128")
+        h.check(
+            pkce.verifier.allSatisfy { $0.isLetter || $0.isNumber || "-._~".contains($0) },
+            "verifier 只含 unreserved 字符"
+        )
+        h.check(pkce.challenge != pkce.verifier, "challenge 不等于 verifier")
+        h.check(!pkce.challenge.contains("="), "challenge 无 Base64 padding")
+
+        let client = GoogleOAuthClient(
+            clientID: "cid.apps.googleusercontent.com",
+            clientSecret: "secret",
+            redirectURIs: ["http://localhost"]
+        )
+        do {
+            let request = try GoogleAuthorizationRequest(
+                client: client,
+                redirectURI: URL(string: "http://localhost:51234/callback")!,
+                pkce: pkce
+            )
+            let components = URLComponents(url: request.url, resolvingAgainstBaseURL: false)
+            let items = components?.queryItems ?? []
+            func param(_ name: String) -> String? { items.first { $0.name == name }?.value }
+
+            h.equal(param("client_id"), client.clientID, "授权 URL 带 client_id")
+            h.equal(param("response_type"), "code", "授权 URL 为授权码流程")
+            h.equal(param("code_challenge_method"), "S256", "使用 S256")
+            h.equal(param("code_challenge"), pkce.challenge, "code_challenge 与 verifier 匹配")
+            h.equal(param("state"), request.state, "state 已写入 URL")
+            h.equal(param("access_type"), "offline", "请求离线访问（拿 refresh_token）")
+            h.equal(param("prompt"), "consent", "强制 consent 以获得 refresh_token")
+            h.equal(param("redirect_uri"), "http://localhost:51234/callback", "redirect_uri 精确回填")
+            h.check(param("scope")?.contains(GoogleOAuthScope.calendarEvents) == true, "scope 含 calendar.events")
+        } catch {
+            h.fail("授权 URL 构造失败：\(error)")
+        }
+
+        // 回调解析
+        let ok = Data("GET /callback?code=abc&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n".utf8)
+        if let callback = GoogleOAuthLoopbackServer.parseCallback(from: ok) {
+            h.equal(callback.code, "abc", "解析回调 code")
+            h.equal(callback.state, "xyz", "解析回调 state")
+        } else {
+            h.fail("正常回调应能解析")
+        }
+        let denied = Data("GET /callback?error=access_denied&error_description=User+denied HTTP/1.1\r\n\r\n".utf8)
+        if let callback = GoogleOAuthLoopbackServer.parseCallback(from: denied) {
+            h.equal(callback.error, "access_denied", "解析用户拒绝")
+            h.check(callback.code == nil, "拒绝时没有 code")
+        } else {
+            h.fail("错误回调应能解析")
+        }
+        h.check(
+            GoogleOAuthLoopbackServer.parseCallback(from: Data("GET /favicon.ico HTTP/1.1\r\n\r\n".utf8)) == nil,
+            "非 /callback 请求不当作回调"
+        )
+
+        // loopback 真实回环：验证 NWListener 能起、能收、能回 200
+        do {
+            let server = GoogleOAuthLoopbackServer()
+            let port = try await server.start()
+            h.check(port > 0, "loopback 监听拿到端口")
+            let url = URL(string: "http://127.0.0.1:\(port)/callback?code=abc&state=xyz")!
+            let (_, response) = try await URLSession.shared.data(from: url)
+            h.equal((response as? HTTPURLResponse)?.statusCode, 200, "回调返回 200")
+            let callback = try await server.waitForCallback(timeout: 5)
+            h.equal(callback.code, "abc", "loopback 收到 code")
+            h.equal(callback.state, "xyz", "loopback 收到 state")
+            await server.stop()
+        } catch {
+            h.fail("loopback 集成失败：\(error)")
+        }
+
+        // 写映射
+        let allDayDraft = DraftFactory.makeDraft(
+            from: makeEvent(type: .exam, start: "2026-03-05T00:00:00+08:00", allDay: true, location: nil),
+            now: TestClock.referenceNow,
+            timeZone: TestClock.timeZone,
+            calendar: TestClock.calendar
+        )
+        let body = GoogleCalendarMapper.makeEventBody(
+            from: allDayDraft,
+            timeZone: TestClock.timeZone,
+            calendar: TestClock.calendar
+        )
+        h.equal(body.start?.date, "2026-03-05", "全天事件写 date 而非 dateTime")
+        h.equal(body.end?.date, "2026-03-06", "全天结束为排他的次日")
+        h.equal(body.colorId, "11", "考试用红色 colorId 11")
+        h.check(body.notes?.contains(ManagedEventMetadata.managedTag) == true, "description 写入托管标签")
+        h.equal(body.extendedProperties?.private?[GoogleCalendarMapper.managedPropertyKey], "1", "写入托管私有属性")
+        h.equal(body.extendedProperties?.private?[GoogleCalendarMapper.typePropertyKey], "exam", "写入类型私有属性")
+
+        let timedDraft = DraftFactory.makeDraft(
+            from: makeEvent(type: .activity, start: "2026-03-08T14:00:00+08:00", allDay: false, location: "A101"),
+            now: TestClock.referenceNow,
+            timeZone: TestClock.timeZone,
+            calendar: TestClock.calendar
+        )
+        let timedBody = GoogleCalendarMapper.makeEventBody(
+            from: timedDraft,
+            timeZone: TestClock.timeZone,
+            calendar: TestClock.calendar
+        )
+        h.check(timedBody.start?.dateTime?.hasPrefix("2026-03-08T14:00:00") == true, "定时事件写 dateTime")
+        h.equal(timedBody.location, "A101", "写入地点")
+        h.equal(GoogleCalendarMapper.colorId(for: .activity), "10", "活动用绿色 colorId 10")
+
+        let birthdayDraft = DraftFactory.makeDraft(
+            from: makeEvent(type: .birthday, start: "2026-03-20T00:00:00+08:00", allDay: true, location: nil),
+            now: TestClock.referenceNow,
+            timeZone: TestClock.timeZone,
+            calendar: TestClock.calendar
+        )
+        let birthdayBody = GoogleCalendarMapper.makeEventBody(
+            from: birthdayDraft,
+            timeZone: TestClock.timeZone,
+            calendar: TestClock.calendar
+        )
+        h.equal(birthdayBody.recurrence, ["RRULE:FREQ=YEARLY"], "生日写入年度重复规则")
+
+        let colorIDs = Set([EventType.deadline, .appointment, .exam, .birthday, .activity].map { GoogleCalendarMapper.colorId(for: $0) })
+        h.equal(colorIDs.count, 5, "五种类型对应五种不同 colorId")
+
+        // 读映射
+        let googleEvent = GoogleEvent(
+            id: "evt-1",
+            summary: "期中考试",
+            notes: ManagedEventMetadata.managedNotes(original: "", type: .exam),
+            start: GoogleEventDateTime(date: "2026-03-05"),
+            end: GoogleEventDateTime(date: "2026-03-06"),
+            extendedProperties: GoogleExtendedProperties(private: [
+                GoogleCalendarMapper.managedPropertyKey: "1",
+                GoogleCalendarMapper.typePropertyKey: "exam"
+            ])
+        )
+        h.check(GoogleCalendarMapper.isManaged(googleEvent), "识别本工具创建的事件")
+        h.check(
+            !GoogleCalendarMapper.isManaged(GoogleEvent(id: "x", summary: "私人", notes: "和朋友的晚餐")),
+            "私人事件不被识别"
+        )
+        if let managed = GoogleCalendarMapper.managedEvent(
+            from: googleEvent,
+            calendarID: "primary",
+            calendarName: "我",
+            timeZone: TestClock.timeZone
+        ) {
+            h.equal(managed.id, "primary/evt-1", "ManagedEvent.id 带日历前缀")
+            h.check(managed.isAllDay, "全天事件识别")
+            h.equal(managed.type, .exam, "类型从私有属性还原")
+        } else {
+            h.fail("Google 事件应能映射为 ManagedEvent")
+        }
+        h.equal(
+            GoogleCalendarMapper.splitManagedEventID("primary/evt-1")?.eventID,
+            "evt-1",
+            "ManagedEvent.id 可拆分"
+        )
+
+        // 401 → 刷新 → 重试（只刷一次）
+        let transport = StubGoogleTransport(responses: [
+            (401, Data()),
+            (200, Data(#"{"id":"evt-9","summary":"ok"}"#.utf8))
+        ])
+        let tokens = StubGoogleTokenProvider()
+        let api = GoogleAPIClient(transport: transport, tokenProvider: tokens)
+        do {
+            let event = try await api.send(GoogleAPIRequest(path: "/calendars/primary/events"), as: GoogleEvent.self)
+            h.equal(event.id, "evt-9", "401 后刷新并重试成功")
+            let refreshCount = await tokens.refreshCount
+            h.equal(refreshCount, 1, "只强制刷新一次")
+            let headers = transport.authorizationHeaders
+            h.equal(headers.count, 2, "共发起两次请求")
+            h.check(headers.last?.contains("token-2") == true, "重试使用刷新后的令牌")
+        } catch {
+            h.fail("401 重试链路失败：\(error)")
+        }
+
+        // 刷新后仍 401：不应无限重试
+        let always401 = StubGoogleTransport(responses: [(401, Data()), (401, Data())])
+        let tokens2 = StubGoogleTokenProvider()
+        let api2 = GoogleAPIClient(transport: always401, tokenProvider: tokens2)
+        do {
+            _ = try await api2.send(GoogleAPIRequest(path: "/calendars/primary/events"), as: GoogleEvent.self)
+            h.fail("两次 401 应失败")
+        } catch let error as GoogleAPIError {
+            h.equal(error, .unauthorized, "两次 401 报 unauthorized")
+            h.equal(always401.requestCount, 2, "最多重试一次")
+        } catch {
+            h.fail("两次 401 的错误类型不符")
+        }
+    }
+
     /// 凭据加载是 Google 接入的安全边界：既要读得到，又不能把 secret 泄露到日志。
     private static func runGoogleCredentialTests(_ h: Harness) {
         let installed = Data("""
@@ -930,6 +1135,52 @@ private func makeEvent(
         needsConfirmation: needsConfirmation,
         notes: notes
     )
+}
+
+/// 记录请求并按序返回预设响应的传输桩。
+private final class StubGoogleTransport: GoogleHTTPTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var responses: [(Int, Data)]
+    private var requests: [URLRequest] = []
+
+    init(responses: [(Int, Data)]) {
+        self.responses = responses
+    }
+
+    var requestCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return requests.count
+    }
+
+    var authorizationHeaders: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return requests.compactMap { $0.value(forHTTPHeaderField: "Authorization") }
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        lock.lock()
+        requests.append(request)
+        let next = responses.isEmpty ? (500, Data()) : responses.removeFirst()
+        lock.unlock()
+        let response = HTTPURLResponse(
+            url: request.url ?? URL(string: "https://example.com")!,
+            statusCode: next.0,
+            httpVersion: "HTTP/1.1",
+            headerFields: nil
+        )!
+        return (next.1, response)
+    }
+}
+
+private actor StubGoogleTokenProvider: GoogleTokenProvider {
+    private(set) var refreshCount = 0
+
+    func validAccessToken() async throws -> String { "token-1" }
+
+    func forceRefreshAccessToken() async throws -> String {
+        refreshCount += 1
+        return "token-2"
+    }
 }
 
 private final class MockURLProtocol: URLProtocol {

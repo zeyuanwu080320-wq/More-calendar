@@ -25,6 +25,7 @@ enum WorkStatus: Equatable {
 enum WriteTarget: String, CaseIterable, Identifiable, Sendable {
     case calendar
     case reminders
+    case googleCalendar
 
     var id: String { rawValue }
 
@@ -33,6 +34,7 @@ enum WriteTarget: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .calendar: return L10n.t("日历", "Calendar")
         case .reminders: return L10n.t("提醒事项", "Reminders")
+        case .googleCalendar: return L10n.t("Google", "Google")
         }
     }
 
@@ -40,6 +42,7 @@ enum WriteTarget: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .calendar: return .appleCalendar
         case .reminders: return .appleReminders
+        case .googleCalendar: return .googleCalendar
         }
     }
 }
@@ -80,6 +83,7 @@ final class AppModel: ObservableObject {
     private let keychain: APIKeyStore
     private let calendarTarget = AppleCalendarProvider()
     private let remindersTarget = AppleRemindersProvider()
+    private let googleTarget = GoogleCalendarProvider()
     private let logService: LogService?
 
     /// Where the write button sends confirmed drafts. Switching only swaps the
@@ -94,6 +98,11 @@ final class AppModel: ObservableObject {
     /// switching sources never destroys what the user typed.
     @Published var plainText: String = ""
 
+    /// Google 可选日历列表（仅在切到 Google 目标时加载）。
+    @Published var googleCalendars: [GoogleCalendarListEntry] = []
+    @Published var selectedGoogleCalendarID: String = ""
+    @Published var selectedGoogleCalendarName: String = ""
+
     /// Persisted across launches, following the same pattern as
     /// `LanguageManager`: the wrapper owns the `UserDefaults` write, while the
     /// `@Published` mirrors above are what drive SwiftUI.
@@ -104,7 +113,11 @@ final class AppModel: ObservableObject {
     /// and permission call in this class goes through it, never through a
     /// concrete provider type.
     private var target: any TargetProvider {
-        writeTarget == .calendar ? calendarTarget : remindersTarget
+        switch writeTarget {
+        case .calendar: return calendarTarget
+        case .reminders: return remindersTarget
+        case .googleCalendar: return googleTarget
+        }
     }
 
     private var parseStartedAt: Date?
@@ -192,6 +205,39 @@ final class AppModel: ObservableObject {
         errorMessage = nil
         notice = nil
         refreshCalendarStatus()
+        if newTarget == .googleCalendar {
+            Task {
+                await googleTarget.refreshAuthorizationState()
+                await googleTarget.loadSelectedCalendarIfNeeded()
+                refreshCalendarStatus()
+                await refreshGoogleCalendars()
+            }
+        }
+    }
+
+    /// 拉取可写的 Google 日历列表，并恢复上次选择（没有就用 primary）。
+    func refreshGoogleCalendars() async {
+        do {
+            googleCalendars = try await googleTarget.listCalendars()
+            let stored = UserDefaults.standard.string(forKey: GoogleCalendarProvider.selectedCalendarDefaultsKey) ?? ""
+            let match = googleCalendars.first { $0.id == stored }
+                ?? googleCalendars.first { $0.primary == true }
+                ?? googleCalendars.first
+            if let match {
+                selectedGoogleCalendarID = match.id
+                selectedGoogleCalendarName = match.summary
+            }
+        } catch {
+            googleCalendars = []
+            errorMessage = shortError(error)
+        }
+    }
+
+    func selectGoogleCalendar(_ entry: GoogleCalendarListEntry) {
+        googleTarget.selectCalendar(entry)
+        selectedGoogleCalendarID = entry.id
+        selectedGoogleCalendarName = entry.summary
+        refreshCalendarStatus()
     }
 
     /// Title of the primary write action, following the selected target.
@@ -199,6 +245,7 @@ final class AppModel: ObservableObject {
         switch writeTarget {
         case .calendar: return L10n.t("写入 Apple 日历", "Write to Apple Calendar")
         case .reminders: return L10n.t("写入 Apple 提醒事项", "Write to Apple Reminders")
+        case .googleCalendar: return L10n.t("写入 Google 日历", "Write to Google Calendar")
         }
     }
 
@@ -206,6 +253,7 @@ final class AppModel: ObservableObject {
         switch writeTarget {
         case .calendar: return "calendar.badge.plus"
         case .reminders: return "checklist"
+        case .googleCalendar: return "globe"
         }
     }
 
@@ -218,6 +266,9 @@ final class AppModel: ObservableObject {
         case .reminders:
             return L10n.t("已确认事件会按类型写入独立提醒事项列表，到期时间取开始时间，失败时回退到默认列表",
                           "Confirmed events go to per-type reminder lists, due at the start time; falls back to the default list")
+        case .googleCalendar:
+            return L10n.t("已确认事件会写入你选择的 Google 日历，并按类型着色",
+                          "Confirmed events go to the Google calendar you picked, colour-coded by type")
         }
     }
 
@@ -226,11 +277,13 @@ final class AppModel: ObservableObject {
     /// Renaming a calendar needs full calendar access; providers skip silently
     /// when access is missing, so this never blocks the UI.
     @discardableResult
-    func syncCalendarLanguage() -> Int {
+    func syncCalendarLanguage() async -> Int {
         let language: ManagedCalendarLanguage = LanguageManager.shared.isEnglish ? .english : .chinese
         calendarTarget.titleLanguage = language
         remindersTarget.titleLanguage = language
-        return calendarTarget.syncLocalizedTitles(to: language) + remindersTarget.syncLocalizedTitles(to: language)
+        let calendarRenamed = await calendarTarget.syncLocalizedTitles(to: language)
+        let remindersRenamed = await remindersTarget.syncLocalizedTitles(to: language)
+        return calendarRenamed + remindersRenamed
     }
 
     var hasInput: Bool {
@@ -270,44 +323,49 @@ final class AppModel: ObservableObject {
     }
 
     var calendarPermissionPrompt: String? {
-        switch calendarState {
-        case .denied:
-            switch writeTarget {
-            case .calendar:
-                return "日历权限被拒绝。写入按钮已禁用，请到系统设置 > 隐私与安全性 > 日历中授权。"
-            case .reminders:
-                return "提醒事项权限被拒绝。写入按钮已禁用，请到系统设置 > 隐私与安全性 > 提醒事项中授权。"
-            }
-        case .restricted:
-            switch writeTarget {
-            case .calendar:
-                return "日历权限受系统限制，无法写入。"
-            case .reminders:
-                return "提醒事项权限受系统限制，无法写入。"
-            }
-        case .unknown:
-            switch writeTarget {
-            case .calendar:
-                return "无法读取日历权限状态，写入按钮已禁用。"
-            case .reminders:
-                return "无法读取提醒事项权限状态，写入按钮已禁用。"
-            }
-        case .notDetermined:
-            switch writeTarget {
-            case .calendar:
-                return "首次写入时会请求完整日历权限。"
-            case .reminders:
-                return "首次写入时会请求完整提醒事项权限。"
-            }
-        case .writeOnly:
-            switch writeTarget {
-            case .calendar:
-                return "当前只有“仅写入”日历权限，无法检查时间冲突。请升级为完整访问后再写入。"
-            case .reminders:
-                return "当前只有“仅写入”提醒事项权限。请升级为完整访问后再写入。"
-            }
-        case .fullAccess:
+        switch (writeTarget, calendarState) {
+        case (_, .fullAccess):
             return nil
+        case (.googleCalendar, .notDetermined):
+            return "尚未连接 Google 账户。点击「连接 Google」授权后即可写入。"
+        case (.googleCalendar, .denied), (.googleCalendar, .restricted):
+            return "Google 授权已被撤销或受限，请重新连接账户。"
+        case (.googleCalendar, .writeOnly):
+            return "Google 授权不完整，请重新连接账户。"
+        case (.googleCalendar, .unknown):
+            return "无法读取 Google 授权状态，写入按钮已禁用。"
+        case (.calendar, .denied):
+            return "日历权限被拒绝。写入按钮已禁用，请到系统设置 > 隐私与安全性 > 日历中授权。"
+        case (.calendar, .restricted):
+            return "日历权限受系统限制，无法写入。"
+        case (.calendar, .unknown):
+            return "无法读取日历权限状态，写入按钮已禁用。"
+        case (.calendar, .notDetermined):
+            return "首次写入时会请求完整日历权限。"
+        case (.calendar, .writeOnly):
+            return "当前只有“仅写入”日历权限，无法检查时间冲突。请升级为完整访问后再写入。"
+        case (.reminders, .denied):
+            return "提醒事项权限被拒绝。写入按钮已禁用，请到系统设置 > 隐私与安全性 > 提醒事项中授权。"
+        case (.reminders, .restricted):
+            return "提醒事项权限受系统限制，无法写入。"
+        case (.reminders, .unknown):
+            return "无法读取提醒事项权限状态，写入按钮已禁用。"
+        case (.reminders, .notDetermined):
+            return "首次写入时会请求完整提醒事项权限。"
+        case (.reminders, .writeOnly):
+            return "当前只有“仅写入”提醒事项权限。请升级为完整访问后再写入。"
+        }
+    }
+
+    /// 页脚授权按钮的标题（三种目标文案不同）。
+    var authorizeButtonTitle: String {
+        switch (writeTarget, calendarState) {
+        case (.googleCalendar, _):
+            return L10n.t("连接 Google", "Connect Google")
+        case (_, .writeOnly):
+            return L10n.t("升级为完整访问", "Upgrade to Full Access")
+        default:
+            return L10n.t("立即授权", "Authorize now")
         }
     }
 
@@ -322,11 +380,19 @@ final class AppModel: ObservableObject {
             do {
                 _ = try await target.requestAccess()
             } catch {
-                errorMessage = writeTarget == .calendar
-                    ? "请求日历权限失败：\(shortError(error))"
-                    : "请求提醒事项权限失败：\(shortError(error))"
+                switch writeTarget {
+                case .calendar:
+                    errorMessage = "请求日历权限失败：\(shortError(error))"
+                case .reminders:
+                    errorMessage = "请求提醒事项权限失败：\(shortError(error))"
+                case .googleCalendar:
+                    errorMessage = "连接 Google 账户失败：\(shortError(error))"
+                }
             }
             refreshCalendarStatus()
+            if writeTarget == .googleCalendar {
+                await refreshGoogleCalendars()
+            }
         }
     }
 
@@ -662,20 +728,28 @@ final class AppModel: ObservableObject {
                     let granted = try await target.requestAccess()
                     refreshCalendarStatus()
                     if !granted || !calendarState.isGranted {
-                        if writeTarget == .calendar {
+                        switch writeTarget {
+                        case .calendar:
                             lastWriteSummary = calendarState == .writeOnly
                                 ? "仅获得写入权限，无法检查冲突，未写入任何事件"
                                 : "日历权限未授予，未写入任何事件"
-                        } else {
+                        case .reminders:
                             lastWriteSummary = "提醒事项权限未授予，未写入任何事件"
+                        case .googleCalendar:
+                            lastWriteSummary = "Google 授权未完成，未写入任何事件"
                         }
                         return
                     }
                 } catch {
                     refreshCalendarStatus()
-                    lastWriteSummary = writeTarget == .calendar
-                        ? "请求日历权限失败，未写入任何事件"
-                        : "请求提醒事项权限失败，未写入任何事件"
+                    switch writeTarget {
+                    case .calendar:
+                        lastWriteSummary = "请求日历权限失败，未写入任何事件"
+                    case .reminders:
+                        lastWriteSummary = "请求提醒事项权限失败，未写入任何事件"
+                    case .googleCalendar:
+                        lastWriteSummary = "连接 Google 账户失败，未写入任何事件"
+                    }
                     lastWriteDetail = shortError(error)
                     return
                 }
@@ -704,7 +778,7 @@ final class AppModel: ObservableObject {
                 }
 
                 do {
-                    let conflicts = try target.findConflicts(for: draft)
+                    let conflicts = try await target.findConflicts(for: draft)
                     draft.conflicts = conflicts
                     if !conflicts.isEmpty {
                         conflictCount += 1
@@ -716,7 +790,7 @@ final class AppModel: ObservableObject {
                     }
                     // One draft per call keeps the per-card conflict/skip/
                     // failure accounting identical to V1.0.
-                    try target.saveEvents([draft])
+                    try await target.saveEvents([draft])
                     draft.isWritten = true
                     written += 1
                     drafts[index] = draft

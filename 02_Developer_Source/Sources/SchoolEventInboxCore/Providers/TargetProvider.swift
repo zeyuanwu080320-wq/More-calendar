@@ -34,6 +34,8 @@ public enum TargetProviderError: LocalizedError, Equatable, Sendable {
     case notManagedEvent
     case recurringBatchUnsupported
     case saveFailed(String)
+    /// 远程目标不可用（网络、令牌、配置）。与「权限被拒绝」区分开。
+    case providerUnavailable(String)
 
     public var errorDescription: String? {
         switch self {
@@ -44,6 +46,7 @@ public enum TargetProviderError: LocalizedError, Equatable, Sendable {
         case .notManagedEvent: return "该条目不是由本工具创建，已拒绝操作"
         case .recurringBatchUnsupported: return "循环事件不支持批量平移，请单条修改"
         case .saveFailed(let reason): return "写入失败：\(reason)"
+        case .providerUnavailable(let reason): return "目标暂不可用：\(reason)"
         }
     }
 }
@@ -90,7 +93,7 @@ public protocol TargetProvider: AnyObject {
 
     /// Existing events overlapping the draft's interval. Used to warn on the
     /// confirmation card before writing.
-    func findConflicts(for draft: EventDraft) throws -> [CalendarConflict]
+    func findConflicts(for draft: EventDraft) async throws -> [CalendarConflict]
 
     /// Writes the given drafts.
     ///
@@ -98,12 +101,12 @@ public protocol TargetProvider: AnyObject {
     /// writes (e.g. Google Calendar). `AppModel` currently passes a single
     /// draft per call so that its per-card conflict/skip/failure reporting
     /// stays byte-identical to V1.0.
-    func saveEvents(_ drafts: [EventDraft]) throws
+    func saveEvents(_ drafts: [EventDraft]) async throws
 
     /// Renames containers owned by this target into `language`. Must be
     /// best-effort: never throws, never blocks the UI.
     @discardableResult
-    func syncLocalizedTitles(to language: ManagedCalendarLanguage) -> Int
+    func syncLocalizedTitles(to language: ManagedCalendarLanguage) async -> Int
 }
 
 /// A target that can also enumerate, delete and shift the events it created.
@@ -114,19 +117,19 @@ public protocol TargetProvider: AnyObject {
 @MainActor
 public protocol ManagedEventProvider: TargetProvider {
     /// Events carrying this tool's managed tag, ordered by start date.
-    func fetchManagedEvents() throws -> [ManagedEvent]
+    func fetchManagedEvents() async throws -> [ManagedEvent]
 
     /// Deletes one managed event. Returns the number removed (0 or 1).
     @discardableResult
-    func deleteManagedEvent(id: String) throws -> Int
+    func deleteManagedEvent(id: String) async throws -> Int
 
     /// Deletes exactly the requested set; never touches unselected events.
-    func deleteManagedEvents(ids: [String]) throws -> ManagedDeleteResult
+    func deleteManagedEvents(ids: [String]) async throws -> ManagedDeleteResult
 
     /// Deletes every managed event. Returns how many were removed.
     @discardableResult
-    func deleteAllManagedEvents() throws -> Int
+    func deleteAllManagedEvents() async throws -> Int
 
     /// Shifts non-recurring managed events by a fixed interval.
-    func shiftManagedEvents(ids: [String], by interval: TimeInterval) throws -> ManagedShiftResult
+    func shiftManagedEvents(ids: [String], by interval: TimeInterval) async throws -> ManagedShiftResult
 }

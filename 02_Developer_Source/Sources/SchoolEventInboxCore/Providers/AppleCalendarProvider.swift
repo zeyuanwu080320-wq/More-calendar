@@ -90,7 +90,7 @@ public final class AppleCalendarProvider: ManagedEventProvider {
         }
     }
 
-    public func findConflicts(for draft: EventDraft) throws -> [CalendarConflict] {
+    public func findConflicts(for draft: EventDraft) async throws -> [CalendarConflict] {
         let calendar = Calendar.current
         let state = authorizationState
         guard state.isGranted else {
@@ -130,7 +130,7 @@ public final class AppleCalendarProvider: ManagedEventProvider {
     /// `AppModel` calls this with one draft at a time so its per-card conflict,
     /// skip and failure accounting stays identical to V1.0; the array signature
     /// is where a batch-capable target can later write everything at once.
-    public func saveEvents(_ drafts: [EventDraft]) throws {
+    public func saveEvents(_ drafts: [EventDraft]) async throws {
         for draft in drafts {
             try save(draft)
         }
@@ -188,7 +188,7 @@ public final class AppleCalendarProvider: ManagedEventProvider {
     /// or a rename fails, this silently does nothing: it must never block the
     /// main flow or surface an error dialog.
     @discardableResult
-    public func syncLocalizedTitles(to language: ManagedCalendarLanguage) -> Int {
+    public func syncLocalizedTitles(to language: ManagedCalendarLanguage) async -> Int {
         titleLanguage = language
         guard authorizationState.isGranted else { return 0 }
         var renamed = 0
@@ -286,7 +286,7 @@ public final class AppleCalendarProvider: ManagedEventProvider {
 
     // MARK: - Managed events
 
-    public func fetchManagedEvents() throws -> [ManagedEvent] {
+    public func fetchManagedEvents() async throws -> [ManagedEvent] {
         let calendar = Calendar.current
         let now = Date()
         guard authorizationState.isGranted else { throw TargetProviderError.accessDenied }
@@ -322,7 +322,7 @@ public final class AppleCalendarProvider: ManagedEventProvider {
     }
 
     @discardableResult
-    public func deleteManagedEvent(id: String) throws -> Int {
+    public func deleteManagedEvent(id: String) async throws -> Int {
         guard authorizationState.isGranted else { throw TargetProviderError.accessDenied }
         guard let event = store.event(withIdentifier: id), isManaged(event) else {
             throw TargetProviderError.notManagedEvent
@@ -337,9 +337,9 @@ public final class AppleCalendarProvider: ManagedEventProvider {
     }
 
     @discardableResult
-    public func deleteAllManagedEvents() throws -> Int {
+    public func deleteAllManagedEvents() async throws -> Int {
         guard authorizationState.isGranted else { throw TargetProviderError.accessDenied }
-        let events = try fetchManagedEvents()
+        let events = try await fetchManagedEvents()
         var removed = 0
         for item in events {
             guard let event = store.event(withIdentifier: item.id), isManaged(event) else { continue }
@@ -360,7 +360,7 @@ public final class AppleCalendarProvider: ManagedEventProvider {
     /// Recurring events are removed with `.futureEvents` so deleting a birthday
     /// does not leave future occurrences behind. IDs that no longer exist, or
     /// that are not managed by this app, are counted as failed and skipped.
-    public func deleteManagedEvents(ids: [String]) throws -> ManagedDeleteResult {
+    public func deleteManagedEvents(ids: [String]) async throws -> ManagedDeleteResult {
         guard authorizationState.isGranted else { throw TargetProviderError.accessDenied }
         var deleted = 0
         var failed = 0
@@ -382,12 +382,12 @@ public final class AppleCalendarProvider: ManagedEventProvider {
 
     /// Shifts non-recurring managed events by a fixed time interval.
     /// Recurring events are rejected by the caller/view before this method.
-    public func shiftManagedEvents(ids: [String], by interval: TimeInterval) throws -> ManagedShiftResult {
+    public func shiftManagedEvents(ids: [String], by interval: TimeInterval) async throws -> ManagedShiftResult {
         let calendar = Calendar.current
         guard authorizationState.isGranted else { throw TargetProviderError.accessDenied }
         guard !ids.isEmpty, interval != 0 else { return ManagedShiftResult(shifted: 0, conflicts: 0, failed: 0) }
         let selectedIDs = Set(ids)
-        let managed = try fetchManagedEvents()
+        let managed = try await fetchManagedEvents()
         let managedIDs = Set(managed.map(\.id))
         guard selectedIDs.isSubset(of: managedIDs) else { throw TargetProviderError.notManagedEvent }
 

@@ -69,7 +69,7 @@ struct ManagedEventsView: View {
             footer
         }
         .frame(width: 760, height: 620)
-        .onAppear { refresh() }
+        .onAppear { Task { await refresh() } }
         .sheet(isPresented: $showShiftSheet) {
             shiftSheet
                 .environmentObject(language)
@@ -79,7 +79,7 @@ struct ManagedEventsView: View {
                 .environmentObject(language)
         }
         .alert(L10n.t("清空所有本工具创建的事件？", "Clear all app-created events?"), isPresented: $showClearConfirmation) {
-            Button(L10n.t("清空全部", "Clear all"), role: .destructive) { clearAll() }
+            Button(L10n.t("清空全部", "Clear all"), role: .destructive) { Task { await clearAll() } }
             Button(L10n.t("取消", "Cancel"), role: .cancel) {}
         } message: {
             Text(L10n.t("只会删除带有管理标签的事件；循环事件会删除未来的发生记录。", "Only tagged events are deleted; recurring events remove future occurrences."))
@@ -89,14 +89,14 @@ struct ManagedEventsView: View {
                    "Delete the \(selected.count) selected events?"),
             isPresented: $showDeleteSelectedConfirmation
         ) {
-            Button(L10n.t("删除选中", "Delete Selected"), role: .destructive) { deleteSelected() }
+            Button(L10n.t("删除选中", "Delete Selected"), role: .destructive) { Task { await deleteSelected() } }
             Button(L10n.t("取消", "Cancel"), role: .cancel) {}
         } message: {
             Text(L10n.dynamic(deleteSelectedMessage))
         }
         .alert(L10n.t("删除循环事件？", "Delete recurring event?"), isPresented: $showRecurringDeleteAlert) {
             Button(L10n.t("删除未来所有发生", "Delete all future occurrences"), role: .destructive) {
-                if let event = pendingRecurringDelete { delete(event) }
+                if let event = pendingRecurringDelete { Task { await delete(event) } }
                 pendingRecurringDelete = nil
             }
             Button(L10n.t("取消", "Cancel"), role: .cancel) { pendingRecurringDelete = nil }
@@ -114,7 +114,7 @@ struct ManagedEventsView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             Button {
-                refresh()
+                Task { await refresh() }
             } label: {
                 Label(L10n.t("刷新", "Refresh"), systemImage: "arrow.clockwise")
             }
@@ -223,7 +223,7 @@ struct ManagedEventsView: View {
                     pendingRecurringDelete = event
                     showRecurringDeleteAlert = true
                 } else {
-                    delete(event)
+                    Task { await delete(event) }
                 }
             } label: {
                 Label(L10n.t("删除", "Delete"), systemImage: "trash")
@@ -327,7 +327,7 @@ struct ManagedEventsView: View {
                 Spacer()
                 Button(L10n.t("应用", "Apply")) {
                     let interval = TimeInterval(customHours * 3_600 + customMinutes * 60)
-                    applyShift(interval)
+                    Task { await applyShift(interval) }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(selected.isEmpty || selectedHasRecurring || (customHours == 0 && customMinutes == 0))
@@ -379,11 +379,11 @@ struct ManagedEventsView: View {
     }
 
     private func quickShiftButton(_ title: String, seconds: TimeInterval) -> some View {
-        Button(title) { applyShift(seconds) }
+        Button(title) { Task { await applyShift(seconds) } }
             .disabled(selected.isEmpty || selectedHasRecurring)
     }
 
-    private func refresh() {
+    private func refresh() async {
         permissionState = provider.authorizationState
         guard permissionState == .fullAccess else {
             events = []
@@ -393,7 +393,7 @@ struct ManagedEventsView: View {
         isLoading = true
         errorMessage = nil
         do {
-            events = try provider.fetchManagedEvents()
+            events = try await provider.fetchManagedEvents()
             selected = selected.intersection(Set(events.map(\.id)))
         } catch {
             errorMessage = error.localizedDescription
@@ -408,29 +408,29 @@ struct ManagedEventsView: View {
             } catch {
                 errorMessage = error.localizedDescription
             }
-            refresh()
+            await refresh()
         }
     }
 
     /// Deletes exactly the checked events and leaves everything else alone.
-    private func deleteSelected() {
+    private func deleteSelected() async {
         guard !selected.isEmpty else { return }
         let ids = selected.sorted()
         do {
-            let result = try provider.deleteManagedEvents(ids: ids)
+            let result = try await provider.deleteManagedEvents(ids: ids)
             selected.removeAll()
             statusMessage = result.failed == 0
                 ? "已删除 \(result.deleted) 条事件"
                 : "已删除 \(result.deleted) 条，\(result.failed) 条失败"
-            refresh()
+            await refresh()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func delete(_ event: ManagedEvent) {
+    private func delete(_ event: ManagedEvent) async {
         do {
-            try provider.deleteManagedEvent(id: event.id)
+            try await provider.deleteManagedEvent(id: event.id)
             selected.remove(event.id)
             events.removeAll { $0.id == event.id }
             statusMessage = "已删除 1 条事件"
@@ -439,8 +439,8 @@ struct ManagedEventsView: View {
         }
     }
 
-    private func clearAll() {        do {
-            let count = try provider.deleteAllManagedEvents()
+    private func clearAll() async {        do {
+            let count = try await provider.deleteAllManagedEvents()
             events = []
             selected.removeAll()
             statusMessage = "已删除 \(count) 条事件"
@@ -449,7 +449,7 @@ struct ManagedEventsView: View {
         }
     }
 
-    private func applyShift(_ interval: TimeInterval) {
+    private func applyShift(_ interval: TimeInterval) async {
         guard !selected.isEmpty else { return }
         guard !selectedHasRecurring else {
             statusMessage = "循环事件不支持批量平移，请单条修改"
@@ -457,7 +457,7 @@ struct ManagedEventsView: View {
         }
         guard interval != 0 else { return }
         do {
-            let result = try provider.shiftManagedEvents(ids: Array(selected), by: interval)
+            let result = try await provider.shiftManagedEvents(ids: Array(selected), by: interval)
             statusMessage = "成功平移 \(result.shifted) 条，\(result.conflicts) 条因冲突失败"
             if result.failed > 0 {
                 statusMessage = (statusMessage ?? "") + "，\(result.failed) 条失败"
@@ -467,7 +467,7 @@ struct ManagedEventsView: View {
                 shiftConflicts = result.conflictDetails
                 showShiftConflicts = true
             }
-            refresh()
+            await refresh()
             showShiftSheet = false
         } catch {
             statusMessage = error.localizedDescription

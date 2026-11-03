@@ -72,11 +72,11 @@ public final class AppleRemindersProvider: TargetProvider {
     /// Returning an empty array (instead of throwing) keeps `AppModel`'s write
     /// loop free of target-specific branching: the conflict card simply never
     /// appears for reminders.
-    public func findConflicts(for draft: EventDraft) throws -> [CalendarConflict] {
+    public func findConflicts(for draft: EventDraft) async throws -> [CalendarConflict] {
         []
     }
 
-    public func saveEvents(_ drafts: [EventDraft]) throws {
+    public func saveEvents(_ drafts: [EventDraft]) async throws {
         for draft in drafts {
             try save(draft)
         }
@@ -144,7 +144,7 @@ public final class AppleRemindersProvider: TargetProvider {
     /// Best-effort like the calendar provider: no access or a failed rename is
     /// silent, and must never block the UI.
     @discardableResult
-    public func syncLocalizedTitles(to language: ManagedCalendarLanguage) -> Int {
+    public func syncLocalizedTitles(to language: ManagedCalendarLanguage) async -> Int {
         titleLanguage = language
         guard authorizationState.isGranted else { return 0 }
         var renamed = 0

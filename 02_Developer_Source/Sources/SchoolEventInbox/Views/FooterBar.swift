@@ -21,7 +21,7 @@ struct FooterBar: View {
                         .buttonStyle(.link)
                         .font(.caption)
                     } else if model.calendarState == .notDetermined || model.calendarState == .writeOnly {
-                        Button(L10n.t(model.calendarState == .writeOnly ? "升级为完整访问" : "立即授权", model.calendarState == .writeOnly ? "Upgrade to Full Access" : "Authorize now")) {
+                        Button(model.authorizeButtonTitle) {
                             model.requestCalendarAccess()
                         }
                         .buttonStyle(.link)
@@ -94,8 +94,36 @@ struct FooterBar: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .controlSize(.regular)
-                .frame(width: 150)
+                .frame(width: 210)
                 .help(L10n.t("选择写入 Apple 日历或 Apple 提醒事项", "Choose whether to write to Apple Calendar or Apple Reminders"))
+
+                // Google 目标需要用户指定写入哪个日历（与 Apple 侧"按类型自动分日历"不同）。
+                if model.writeTarget == .googleCalendar, !model.googleCalendars.isEmpty {
+                    Menu {
+                        ForEach(model.googleCalendars, id: \.id) { entry in
+                            Button {
+                                model.selectGoogleCalendar(entry)
+                            } label: {
+                                if entry.id == model.selectedGoogleCalendarID {
+                                    Label(entry.summary, systemImage: "checkmark")
+                                } else {
+                                    Text(entry.summary)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label(
+                            model.selectedGoogleCalendarName.isEmpty
+                                ? L10n.t("选择日历", "Choose calendar")
+                                : model.selectedGoogleCalendarName,
+                            systemImage: "calendar"
+                        )
+                        .lineLimit(1)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .frame(maxWidth: 190)
+                    .help(L10n.t("选择写入哪个 Google 日历", "Choose which Google calendar to write to"))
+                }
 
                 Button {
                     model.writeToCalendar()

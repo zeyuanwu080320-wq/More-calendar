@@ -57,6 +57,16 @@ CORE_PROVIDERS = [
     "AppleRemindersProvider.swift",
     "GoogleOAuthClient.swift",
 ]
+CORE_GOOGLE_PROVIDERS = [
+    "GoogleOAuth.swift",
+    "GoogleTokenStore.swift",
+    "GoogleOAuthLoopbackServer.swift",
+    "GoogleOAuthManager.swift",
+    "GoogleAPIClient.swift",
+    "GoogleCalendarModels.swift",
+    "GoogleCalendarMapper.swift",
+    "GoogleCalendarProvider.swift",
+]
 CORE_UTILITIES = ["FlexibleDateParser.swift"]
 
 
@@ -106,6 +116,7 @@ def main() -> None:
     models_group = oid("group:Models")
     services_group = oid("group:Services")
     providers_group = oid("group:Providers")
+    google_group = oid("group:Google")
     utilities_group = oid("group:Utilities")
     support_group = oid("group:Support")
 
@@ -120,6 +131,7 @@ def main() -> None:
     model_refs: list[str] = []
     service_refs: list[str] = []
     provider_refs: list[str] = []
+    google_refs: list[str] = []
     utility_refs: list[str] = []
 
     def add(key: str, path: str, bucket: list[str]) -> None:
@@ -138,6 +150,8 @@ def main() -> None:
         add("Services/" + name, name, service_refs)
     for name in CORE_PROVIDERS:
         add("Providers/" + name, name, provider_refs)
+    for name in CORE_GOOGLE_PROVIDERS:
+        add("Providers/Google/" + name, name, google_refs)
     for name in CORE_UTILITIES:
         add("Utilities/" + name, name, utility_refs)
 
@@ -160,7 +174,8 @@ def main() -> None:
         group("Core", "SchoolEventInboxCore", [models_group, services_group, providers_group, utilities_group], path="SchoolEventInboxCore"),
         group("Models", "Models", model_refs, path="Models"),
         group("Services", "Services", service_refs, path="Services"),
-        group("Providers", "Providers", provider_refs, path="Providers"),
+        group("Providers", "Providers", provider_refs + [google_group], path="Providers"),
+        group("Google", "Google", google_refs, path="Google"),
         group("Utilities", "Utilities", utility_refs, path="Utilities"),
         group("Support", "Support", [info_ref], path="Support"),
     ]
@@ -175,6 +190,8 @@ def main() -> None:
         oid("buildfile:Services/" + name) for name in CORE_SERVICES
     ] + [
         oid("buildfile:Providers/" + name) for name in CORE_PROVIDERS
+    ] + [
+        oid("buildfile:Providers/Google/" + name) for name in CORE_GOOGLE_PROVIDERS
     ] + [
         oid("buildfile:Utilities/" + name) for name in CORE_UTILITIES
     ]
