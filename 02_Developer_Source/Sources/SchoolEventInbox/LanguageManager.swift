@@ -130,7 +130,20 @@ public enum L10n {
             "尚未确认": "Not confirmed",
             "需补充开始时间": "Start time is required",
             "结束时间必须晚于开始时间": "End time must be after start time",
-            "结束日期不能早于开始日期": "End date cannot be before start date"
+            "结束日期不能早于开始日期": "End date cannot be before start date",
+            // Apple Reminders target (V2.0)
+            "提醒事项权限被拒绝。写入按钮已禁用，请到系统设置 > 隐私与安全性 > 提醒事项中授权。": "Reminders access denied. Writing is disabled. Allow access in System Settings > Privacy & Security > Reminders.",
+            "提醒事项权限受系统限制，无法写入。": "Reminders access is restricted; writing is unavailable.",
+            "无法读取提醒事项权限状态，写入按钮已禁用。": "Reminders authorization status is unavailable; writing is disabled.",
+            "首次写入时会请求完整提醒事项权限。": "Full Reminders access will be requested on the first write.",
+            "当前只有“仅写入”提醒事项权限。请升级为完整访问后再写入。": "Only Write Only Reminders access is granted. Upgrade to Full Access before writing.",
+            "提醒事项权限未授予，未写入任何事件": "Reminders access was not granted; no events were written",
+            "请求提醒事项权限失败，未写入任何事件": "Reminders permission request failed; no events were written",
+            // Target-neutral wording shared by both providers
+            "权限被拒绝，请到系统设置授权": "Access denied. Allow access in System Settings.",
+            "没有可写入的默认位置": "No default target is available.",
+            "该条目不存在或已被删除": "The item no longer exists.",
+            "该条目不是由本工具创建，已拒绝操作": "This item was not created by this tool."
         ]
         if let value = exact[text] { return value }
 
@@ -142,6 +155,8 @@ public enum L10n {
             ("日历权限未授予，未写入任何事件", "Calendar access was not granted; no events were written"),
             ("仅获得写入权限，无法检查冲突，未写入任何事件", "Only Write Only access was granted; no events were written"),
             ("写入日历失败：", "Calendar write failed: "),
+            ("请求提醒事项权限失败：", "Reminders permission request failed: "),
+            ("写入失败：", "Write failed: "),
             ("无法读取图片：", "Cannot read image: "),
             ("清空日志失败：", "Failed to clear logs: "),
             ("导出失败：", "Export failed: "),

@@ -14,17 +14,29 @@ struct InputPane: View {
                 StatusPill(status: model.workStatus)
             }
 
-            Text("粘贴 Outlook 邮件正文；截图可点图片区后按 ⌘V，或拖入 .png / .jpg。图片只在本机 OCR，只有文本会发给 DeepSeek。")
+            Picker("", selection: Binding(
+                get: { model.inputSource },
+                set: { model.selectInputSource($0) }
+            )) {
+                ForEach(InputSource.allCases) { source in
+                    Text(source.paneTitle).tag(source)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .help(L10n.t("选择「邮件/截图」或「纯文本」输入", "Choose Email/Images or Plain Text input"))
+
+            Text(inputDescription)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Label("邮件正文", systemImage: "envelope")
+                    Label(model.inputSource.editorTitle, systemImage: model.inputSource.editorSymbol)
                         .font(.headline)
                     Spacer()
-                    Text(L10n.t("\(model.emailText.count) 字", "\(model.emailText.count) characters"))
+                    Text(L10n.t("\(activeInputText.count) 字", "\(activeInputText.count) characters"))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -34,52 +46,60 @@ struct InputPane: View {
                         .fill(Color(nsColor: .textBackgroundColor))
                     RoundedRectangle(cornerRadius: 10)
                         .strokeBorder(Color.secondary.opacity(0.22))
-                    if model.emailText.isEmpty {
-                        Text("例如：\n报名截止 3月5日；活动 3月8日 14:00；地点 A101……")
+                    if activeInputText.isEmpty {
+                        Text(model.inputSource.editorPlaceholder)
                             .font(.system(size: 13))
                             .foregroundStyle(.tertiary)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 12)
                             .allowsHitTesting(false)
                     }
-                    TextEditor(text: $model.emailText)
+                    TextEditor(text: activeInputBinding)
                         .font(.system(size: 13))
                         .scrollContentBackground(.hidden)
                         .padding(7)
-                        .onChange(of: model.emailText) { _, _ in
+                        // Rebuild on source switch so the editor never keeps the
+                        // other source's text or its undo stack.
+                        .id(model.inputSource)
+                        .onChange(of: activeInputText) { _, _ in
                             model.inputDidChange()
                         }
                 }
                 .frame(minHeight: 210, idealHeight: 280)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label("图片截图", systemImage: "photo.on.rectangle.angled")
-                        .font(.headline)
-                    Spacer()
-                    if !model.images.isEmpty {
-                        Button("清除全部", role: .destructive) {
-                            model.clearImages()
+            // Screenshots belong to the email/OCR pipeline only. Hiding them in
+            // text mode is what makes "no OCR" visible to the user; buffered
+            // images are kept so switching back does not lose them.
+            if model.inputSource == .email {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label("图片截图", systemImage: "photo.on.rectangle.angled")
+                            .font(.headline)
+                        Spacer()
+                        if !model.images.isEmpty {
+                            Button("清除全部", role: .destructive) {
+                                model.clearImages()
+                            }
+                            .buttonStyle(.link)
                         }
-                        .buttonStyle(.link)
+                        Button {
+                            model.pasteImageFromClipboard()
+                        } label: {
+                            Label("粘贴剪贴板图片", systemImage: "doc.on.clipboard")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    Button {
-                        model.pasteImageFromClipboard()
-                    } label: {
-                        Label("粘贴剪贴板图片", systemImage: "doc.on.clipboard")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+
+                    ImageDropArea(model: model)
                 }
 
-                ImageDropArea(model: model)
-            }
-
-            if let imageMessage = model.imageMessage {
-                Label(L10n.dynamic(imageMessage), systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                if let imageMessage = model.imageMessage {
+                    Label(L10n.dynamic(imageMessage), systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
 
             HStack(spacing: 10) {
@@ -118,6 +138,69 @@ struct InputPane: View {
             }
         }
         .padding(20)
+    }
+
+    // MARK: - Source-dependent strings and bindings
+
+    private var activeInputText: String {
+        model.inputSource == .email ? model.emailText : model.plainText
+    }
+
+    private var activeInputBinding: Binding<String> {
+        model.inputSource == .email ? $model.emailText : $model.plainText
+    }
+
+    private var inputDescription: String {
+        switch model.inputSource {
+        case .email:
+            return L10n.t(
+                "粘贴 Outlook 邮件正文；截图可点图片区后按 ⌘V，或拖入 .png / .jpg。图片只在本机 OCR，只有文本会发给 DeepSeek。",
+                "Paste an Outlook email body; for screenshots click the image area and press ⌘V, or drop a .png / .jpg. Images are OCR'd on-device; only text is sent to DeepSeek."
+            )
+        case .text:
+            return L10n.t(
+                "直接输入或粘贴任意文本。纯文本模式不做 OCR、不使用图片，文本会发给 DeepSeek。",
+                "Type or paste any text. Plain Text mode does no OCR and uses no images; the text is sent to DeepSeek."
+            )
+        }
+    }
+}
+
+private extension InputSource {
+    var paneTitle: String {
+        switch self {
+        case .email: return L10n.t("邮件 / 截图", "Email / Images")
+        case .text: return L10n.t("纯文本", "Plain Text")
+        }
+    }
+
+    var editorTitle: String {
+        switch self {
+        case .email: return L10n.t("邮件正文", "Email body")
+        case .text: return L10n.t("纯文本", "Plain text")
+        }
+    }
+
+    var editorSymbol: String {
+        switch self {
+        case .email: return "envelope"
+        case .text: return "text.alignleft"
+        }
+    }
+
+    var editorPlaceholder: String {
+        switch self {
+        case .email:
+            return L10n.t(
+                "例如：\n报名截止 3月5日；活动 3月8日 14:00；地点 A101……",
+                "e.g.\nDeadline March 5; event March 8 at 14:00; location A101…"
+            )
+        case .text:
+            return L10n.t(
+                "例如：\n3月5日前提交报名表；3月8日 14:00 说明会，地点 A101……",
+                "e.g.\nSubmit the form by March 5; info session March 8 at 14:00 in A101…"
+            )
+        }
     }
 }
 

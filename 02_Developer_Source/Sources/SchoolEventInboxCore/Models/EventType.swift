@@ -79,8 +79,8 @@ public enum EventType: String, Codable, CaseIterable, Sendable {
 
 /// Language used for the titles of the per-type Apple calendars.
 ///
-/// Lives in Core because `CalendarService` must name calendars without knowing
-/// about the SwiftUI `LanguageManager`, which lives in the app target.
+/// Lives in Core because `AppleCalendarProvider` must name calendars without
+/// knowing about the SwiftUI `LanguageManager`, which lives in the app target.
 public enum ManagedCalendarLanguage: String, CaseIterable, Sendable {
     case chinese
     case english

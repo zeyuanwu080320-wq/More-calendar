@@ -37,6 +37,12 @@ struct SelfTest {
         harness.section("按类型分配日历")
         runCalendarRoutingTests(harness)
 
+        harness.section("提醒事项到期映射")
+        runRemindersMappingTests(harness)
+
+        harness.section("输入源组装（邮件 vs 纯文本）")
+        runInputComposerTests(harness)
+
         harness.section("日期/时区/歧义")
         runDateTests(harness)
 
@@ -364,7 +370,7 @@ struct SelfTest {
         h.check(events?.allSatisfy { $0.needsConfirmation } == true, "名单需要确认")
         h.equal(events?.first?.title, "Hayeon 生日", "英文姓名标题")
         h.check(events?.first?.notes.contains("缺年份，默认今年") == true, "缺年份 notes")
-        h.equal(CalendarService.managedNotes(original: "hi", type: .birthday).contains(CalendarService.managedTag), true, "birthday 标签")
+        h.equal(ManagedEventMetadata.managedNotes(original: "hi", type: .birthday).contains(ManagedEventMetadata.managedTag), true, "birthday 标签")
     }
 
     private static func runModelAndTagTests(_ h: Harness) {
@@ -372,12 +378,12 @@ struct SelfTest {
         h.equal(EventType.birthday.colorToken, "pink", "生日颜色")
         h.check(EventType.allCases.contains(.birthday), "类型列表含 birthday")
 
-        let notes = CalendarService.managedNotes(original: "用户备注", type: .birthday)
-        h.check(notes.contains(CalendarService.managedTag), "notes 含 SchoolEventInbox-Managed")
-        h.check(notes.contains(CalendarService.compatibilityTag), "notes 含 Managed by SchoolEventInbox")
-        h.check(notes.contains("\(CalendarService.typeTagPrefix)birthday]"), "notes 含 birthday 类型标记")
-        h.check(CalendarService.isManagedNotes(notes), "托管标签识别")
-        h.check(!CalendarService.isManagedNotes("和朋友的晚餐"), "私人事件不被识别为托管")
+        let notes = ManagedEventMetadata.managedNotes(original: "用户备注", type: .birthday)
+        h.check(notes.contains(ManagedEventMetadata.managedTag), "notes 含 SchoolEventInbox-Managed")
+        h.check(notes.contains(ManagedEventMetadata.compatibilityTag), "notes 含 Managed by SchoolEventInbox")
+        h.check(notes.contains("\(ManagedEventMetadata.typeTagPrefix)birthday]"), "notes 含 birthday 类型标记")
+        h.check(ManagedEventMetadata.isManagedNotes(notes), "托管标签识别")
+        h.check(!ManagedEventMetadata.isManagedNotes("和朋友的晚餐"), "私人事件不被识别为托管")
 
         let allDay = DraftFactory.makeDraft(
             from: makeEvent(type: .birthday, start: "2026-03-20T00:00:00+08:00", allDay: true, location: nil),
@@ -394,44 +400,140 @@ struct SelfTest {
     private static func runCalendarRoutingTests(_ h: Harness) {
         // Pure mapping only: these assertions never touch EKEventStore, so they
         // are safe to run in a sandbox without calendar permission.
-        h.equal(CalendarService.managedCalendarTitle(for: .deadline), "More Calendar - 截止", "截止日历标题")
-        h.equal(CalendarService.managedCalendarTitle(for: .appointment), "More Calendar - 预约", "预约日历标题")
-        h.equal(CalendarService.managedCalendarTitle(for: .exam), "More Calendar - 考试", "考试日历标题")
-        h.equal(CalendarService.managedCalendarTitle(for: .birthday), "More Calendar - 生日", "生日日历标题")
-        h.equal(CalendarService.managedCalendarTitle(for: .activity), "More Calendar - 活动", "活动日历标题")
-        h.equal(CalendarService.managedCalendarTitle(for: .other), "More Calendar - 活动", "其他与活动共用日历")
+        h.equal(ManagedEventMetadata.managedCalendarTitle(for: .deadline), "More Calendar - 截止", "截止日历标题")
+        h.equal(ManagedEventMetadata.managedCalendarTitle(for: .appointment), "More Calendar - 预约", "预约日历标题")
+        h.equal(ManagedEventMetadata.managedCalendarTitle(for: .exam), "More Calendar - 考试", "考试日历标题")
+        h.equal(ManagedEventMetadata.managedCalendarTitle(for: .birthday), "More Calendar - 生日", "生日日历标题")
+        h.equal(ManagedEventMetadata.managedCalendarTitle(for: .activity), "More Calendar - 活动", "活动日历标题")
+        h.equal(ManagedEventMetadata.managedCalendarTitle(for: .other), "More Calendar - 活动", "其他与活动共用日历")
 
-        h.equal(CalendarService.managedCalendarColorToken(for: .deadline), .orange, "截止→橙")
-        h.equal(CalendarService.managedCalendarColorToken(for: .appointment), .blue, "预约→蓝")
-        h.equal(CalendarService.managedCalendarColorToken(for: .exam), .red, "考试→红")
-        h.equal(CalendarService.managedCalendarColorToken(for: .birthday), .purple, "生日→紫")
-        h.equal(CalendarService.managedCalendarColorToken(for: .activity), .green, "活动→绿")
-        h.equal(CalendarService.managedCalendarColorToken(for: .other), .green, "其他→绿")
+        h.equal(ManagedEventMetadata.managedCalendarColorToken(for: .deadline), .orange, "截止→橙")
+        h.equal(ManagedEventMetadata.managedCalendarColorToken(for: .appointment), .blue, "预约→蓝")
+        h.equal(ManagedEventMetadata.managedCalendarColorToken(for: .exam), .red, "考试→红")
+        h.equal(ManagedEventMetadata.managedCalendarColorToken(for: .birthday), .purple, "生日→紫")
+        h.equal(ManagedEventMetadata.managedCalendarColorToken(for: .activity), .green, "活动→绿")
+        h.equal(ManagedEventMetadata.managedCalendarColorToken(for: .other), .green, "其他→绿")
 
         h.equal(EventType.other.managedCalendarBucket, .activity, "other 归入活动桶")
-        h.check(CalendarService.managedCalendarTitle(for: .exam)
-            .hasPrefix(CalendarService.managedCalendarPrefix), "日历标题带统一前缀")
+        h.check(ManagedEventMetadata.managedCalendarTitle(for: .exam)
+            .hasPrefix(ManagedEventMetadata.managedCalendarPrefix), "日历标题带统一前缀")
 
         // Each bucket must own a distinct calendar and colour.
         let buckets: [EventType] = [.deadline, .appointment, .exam, .birthday, .activity]
-        let titles = Set(buckets.map { CalendarService.managedCalendarTitle(for: $0) })
-        let colors = Set(buckets.map { CalendarService.managedCalendarColorToken(for: $0) })
+        let titles = Set(buckets.map { ManagedEventMetadata.managedCalendarTitle(for: $0) })
+        let colors = Set(buckets.map { ManagedEventMetadata.managedCalendarColorToken(for: $0) })
         h.equal(titles.count, buckets.count, "五种类型对应五个不同日历")
         h.equal(colors.count, buckets.count, "五种类型对应五种不同颜色")
 
         // English titles + reverse lookup (used when renaming existing
         // calendars after a language switch).
-        h.equal(CalendarService.managedCalendarTitle(for: .exam, language: .english),
+        h.equal(ManagedEventMetadata.managedCalendarTitle(for: .exam, language: .english),
                 "More Calendar - Exam", "英文考试日历标题")
-        h.equal(CalendarService.managedCalendarTitle(for: .birthday, language: .english),
+        h.equal(ManagedEventMetadata.managedCalendarTitle(for: .birthday, language: .english),
                 "More Calendar - Birthday", "英文生日日历标题")
-        h.equal(CalendarService.managedCalendarTitle(for: .other, language: .english),
+        h.equal(ManagedEventMetadata.managedCalendarTitle(for: .other, language: .english),
                 "More Calendar - Activity", "英文 other 归入 Activity")
-        h.equal(CalendarService.managedCalendarBucket(forTitle: "More Calendar - 考试"), .exam, "中文标题回溯类型")
-        h.equal(CalendarService.managedCalendarBucket(forTitle: "More Calendar - Exam"), .exam, "英文标题回溯类型")
-        h.equal(CalendarService.managedCalendarBucket(forTitle: "More Calendar - Activity"), .activity, "Activity 标题回溯")
-        h.check(CalendarService.managedCalendarBucket(forTitle: "校历") == nil, "非本工具日历不被接管")
-        h.check(CalendarService.knownCalendarTitles(for: .exam).count == 2, "考试有中英两种标题")
+        h.equal(ManagedEventMetadata.managedCalendarBucket(forTitle: "More Calendar - 考试"), .exam, "中文标题回溯类型")
+        h.equal(ManagedEventMetadata.managedCalendarBucket(forTitle: "More Calendar - Exam"), .exam, "英文标题回溯类型")
+        h.equal(ManagedEventMetadata.managedCalendarBucket(forTitle: "More Calendar - Activity"), .activity, "Activity 标题回溯")
+        h.check(ManagedEventMetadata.managedCalendarBucket(forTitle: "校历") == nil, "非本工具日历不被接管")
+        h.check(ManagedEventMetadata.knownCalendarTitles(for: .exam).count == 2, "考试有中英两种标题")
+    }
+
+    /// Reminders carry a single due point instead of a start/end interval, so
+    /// the mapping deserves its own assertions. Pure: no reminder permission
+    /// is requested here.
+    private static func runRemindersMappingTests(_ h: Harness) {
+        let allDayDraft = DraftFactory.makeDraft(
+            from: makeEvent(type: .deadline, start: "2026-03-05T00:00:00+08:00", allDay: true, location: nil),
+            now: TestClock.referenceNow,
+            timeZone: TestClock.timeZone,
+            calendar: TestClock.calendar
+        )
+        let allDay = AppleRemindersProvider.dueDateComponents(for: allDayDraft, calendar: TestClock.calendar)
+        h.equal(allDay.year, 2026, "全天到期：年")
+        h.equal(allDay.month, 3, "全天到期：月")
+        h.equal(allDay.day, 5, "全天到期：日")
+        h.check(allDay.hour == nil && allDay.minute == nil, "全天到期只写日期不写时刻")
+
+        let timedDraft = DraftFactory.makeDraft(
+            from: makeEvent(type: .appointment, start: "2026-03-12T09:30:00+08:00", allDay: false, location: nil),
+            now: TestClock.referenceNow,
+            timeZone: TestClock.timeZone,
+            calendar: TestClock.calendar
+        )
+        let timed = AppleRemindersProvider.dueDateComponents(for: timedDraft, calendar: TestClock.calendar)
+        h.equal(timed.day, 12, "定时到期：日")
+        h.equal(timed.hour, 9, "定时到期：小时取开始时间")
+        h.equal(timed.minute, 30, "定时到期：分钟取开始时间")
+
+        // A birthday keeps the calendar's yearly-recurrence intent, and its due
+        // date stays date-only even when the model marked it as a timed event.
+        let birthdayDraft = DraftFactory.makeDraft(
+            from: makeEvent(type: .birthday, start: "2026-03-20T00:00:00+08:00", allDay: true, location: nil),
+            now: TestClock.referenceNow,
+            timeZone: TestClock.timeZone,
+            calendar: TestClock.calendar
+        )
+        let birthday = AppleRemindersProvider.dueDateComponents(for: birthdayDraft, calendar: TestClock.calendar)
+        h.check(birthday.hour == nil, "生日到期只写日期")
+        h.equal(birthday.day, 20, "生日到期日")
+    }
+
+    /// The DeepSeek payload is a prompt contract: these assertions pin both the
+    /// exact section format and the guarantee that text mode never carries OCR.
+    private static func runInputComposerTests(_ h: Harness) {
+        let ocr = [InputComposer.OCRSection(name: "a.png", text: "图一")]
+
+        let emailPayload = InputComposer.compose(
+            source: .email,
+            emailBody: "正文",
+            plainText: "不应出现",
+            ocrSections: ocr
+        )
+        h.equal(emailPayload, "【邮件正文】\n正文\n\n【图片 1 本地 OCR：a.png】\n图一", "邮件模式拼接正文与 OCR 段")
+
+        let textPayload = InputComposer.compose(
+            source: .text,
+            emailBody: "不应出现",
+            plainText: "3月5日截止",
+            ocrSections: ocr
+        )
+        h.equal(textPayload, "【纯文本】\n3月5日截止", "纯文本只发送纯文本段")
+        h.check(!textPayload.contains("OCR"), "纯文本模式不包含 OCR 段")
+        h.check(!textPayload.contains("不应出现"), "纯文本模式忽略邮件正文缓冲")
+
+        h.equal(
+            InputComposer.compose(source: .text, emailBody: "", plainText: "   ", ocrSections: []),
+            "",
+            "空白输入不产生载荷"
+        )
+        h.equal(
+            InputComposer.compose(source: .text, emailBody: "", plainText: "  内容  ", ocrSections: []),
+            "【纯文本】\n内容",
+            "纯文本首尾空白被裁剪"
+        )
+
+        h.check(
+            InputComposer.hasInput(source: .text, emailBody: "", plainText: "x", imageCount: 0),
+            "纯文本有内容时可解析"
+        )
+        h.check(
+            !InputComposer.hasInput(source: .text, emailBody: "", plainText: "  ", imageCount: 3),
+            "纯文本为空时不可解析，且图片不参与判定"
+        )
+        h.check(
+            InputComposer.hasInput(source: .email, emailBody: "", plainText: "x", imageCount: 1),
+            "邮件模式仅有图片时可解析"
+        )
+        h.check(
+            !InputComposer.hasInput(source: .email, emailBody: "  ", plainText: "x", imageCount: 0),
+            "邮件模式下纯文本缓冲不参与判定"
+        )
+
+        h.equal(InputComposer.logInputType(source: .text, emailBody: "", imageCount: 0), "text", "纯文本日志类型为 text")
+        h.equal(InputComposer.logInputType(source: .email, emailBody: "", imageCount: 2), "image", "仅图片日志类型为 image")
+        h.equal(InputComposer.logInputType(source: .email, emailBody: "x", imageCount: 2), "email", "混合输入仍记为 email")
     }
 
     private static func runDateTests(_ h: Harness) {
@@ -482,8 +584,27 @@ struct SelfTest {
     }
 
     private static func runCalendarStatusTest(_ h: Harness) async {
-        let state = await MainActor.run { CalendarService().authorizationState }
+        let state = await MainActor.run { AppleCalendarProvider().authorizationState }
         h.check(state != .unknown, "EventKit 授权状态可读取")
+        // Guards the V2 seam: AppModel holds `any TargetProvider` and reaches the
+        // management panel through a downcast, which would otherwise fail
+        // silently with an empty sheet.
+        let seam = await MainActor.run { () -> Bool in
+            let provider: any TargetProvider = AppleCalendarProvider()
+            return provider.providerID == .appleCalendar
+                && (provider as? any ManagedEventProvider) != nil
+        }
+        h.check(seam, "AppleCalendarProvider 满足 TargetProvider 且可取得管理能力")
+
+        // The reminders target must NOT satisfy ManagedEventProvider: it has no
+        // time slot to shift, and the menu/picker relies on this to disable
+        // the management panel instead of showing an empty one.
+        let remindersSeam = await MainActor.run { () -> Bool in
+            let provider: any TargetProvider = AppleRemindersProvider()
+            return provider.providerID == .appleReminders
+                && (provider as? any ManagedEventProvider) == nil
+        }
+        h.check(remindersSeam, "提醒事项仅实现 TargetProvider，不提供时间轴管理")
         print("  CALENDAR STATUS: \(state.displayText) (canWrite=\(state.isGranted))")
         if state == .notDetermined || state == .writeOnly {
             print("  TODO: 未在本轮自动请求日历权限，避免替用户在真实日历中写入；首次点击写入时会调用 requestFullAccessToEvents。")

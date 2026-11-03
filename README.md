@@ -20,11 +20,11 @@
 
 每天从学校邮件、通知截图里抄日程，再手动敲进日历，是一件又慢又容易漏的事。**More calendar** 把这个流程压缩成三步：
 
-1. **粘贴** —— 邮件正文直接粘贴，或者截图/海报拖进来、`⌘V` 贴进来。
+1. **粘贴** —— 邮件正文或任意纯文本直接粘贴，截图/海报也可以拖进来、`⌘V` 贴进来。
 2. **核对** —— 本机 OCR 出文字，DeepSeek 抽出候选事件，你在卡片上逐条改类型、时间、地点、全天。
-3. **写入** —— 你点了"写入 Apple 日历"，事件才会进日历。**不会自动写入，不会后台监听邮箱。**
+3. **写入** —— 你点了"写入 Apple 日历"或"写入 Apple 提醒事项"，事件才会落地。**不会自动写入，不会后台监听邮箱。**
 
-图片永远不出本机：OCR 走 macOS 自带的 Vision 框架，只有**文字**会发给 DeepSeek。
+图片永远不出本机：OCR 走 macOS 自带的 Vision 框架，只有**文字**会发给 DeepSeek。纯文本模式完全不经过 OCR。
 
 ### 核心功能
 
@@ -32,13 +32,17 @@
 |---|---|
 | **本地 OCR** | 截图在内存里用 Vision 识别，图片不上传、不落盘 |
 | **智能抽取** | DeepSeek 按固定 JSON 结构抽出标题、类型、起止时间、地点、原文依据 |
+| **纯文本输入** | 「纯文本」模式跳过 OCR，直接把文字发给 DeepSeek |
 | **标签分类** | 事件类型：截止 / 预约 / 考试 / 生日 / 活动 / 其他 |
 | **按类型分日历** | 每种类型写入独立的 Apple 日历，**颜色一眼可辨**：考试=红、生日=紫、截止=橙、预约=蓝、活动=绿 |
+| **按类型分提醒事项** | 同为每种类型建独立列表；到期时间取开始时间，全天/生日只写日期并每年重复 |
+| **两种落点** | 一键在 Apple 日历与 Apple 提醒事项之间切换写入目标 |
 | **冲突检测** | 写入前检查时间重叠，默认跳过；也可在卡片上勾选"冲突仍写入" |
 | **全天与生日** | 全天事件只显示日期；生日强制全天并设为**每年重复** |
 | **批量平移** | 勾选多条统一 `+1 小时 / -1 小时 / +1 天 / -1 天 / +1 周` 或自定义分钟数，冲突会逐条告诉你**是谁撞了谁** |
 | **批量删除** | 「删除选中」只删勾选的；「清空所有」才是全删，且已降级为次要按钮 |
 | **双语界面** | 中 / EN 一键切换，连 Apple 日历的分类名也跟着改 |
+| **记住选择** | 输入来源与写入目标跨启动保留 |
 | **托管标识** | 写入的事件带专属标签，管理面板只显示本工具创建的事件，不碰你的私人日程 |
 | **密钥安全** | API Key 只存 macOS Keychain，不写代码、不写日志、界面不回显 |
 | **日志脱敏** | 只记计数与类型；导出前再做一次脱敏，不含正文、标题、地点、邮箱、学号 |
@@ -49,6 +53,7 @@
 - **macOS 15 (Sequoia) 或更高**
 - 一个 **DeepSeek API Key**（自备，按量计费）
 - **完整日历访问权限**（不是"仅写入"——本工具需要在写入前读取同时间段的事件来判断冲突）
+- 选择写入提醒事项时，还需要 **完整提醒事项访问权限**
 - 编译需要 **Command Line Tools**（Swift 6.x）；**不需要完整 Xcode**
 
 ### 准备工作（两步，缺一不可）
@@ -128,11 +133,11 @@ cd 02_Developer_Source
 Copying school schedules out of emails and screenshots into a calendar is slow and error-prone.
 **More calendar** compresses it into three steps:
 
-1. **Paste** — paste the email body, or drop / `⌘V` a screenshot.
+1. **Paste** — paste an email body or any plain text, or drop / `⌘V` a screenshot.
 2. **Review** — local Vision OCR extracts the text, DeepSeek proposes structured events, and you fix type, time, place and all-day flag on each card.
-3. **Write** — nothing enters Apple Calendar until you press *Write to Apple Calendar*. No auto-write, no background mailbox polling.
+3. **Write** — nothing lands until you press *Write to Apple Calendar* or *Write to Apple Reminders*. No auto-write, no background mailbox polling.
 
-Images never leave the machine: OCR runs on Apple's Vision framework, and only **text** is sent to DeepSeek.
+Images never leave the machine: OCR runs on Apple's Vision framework, and only **text** is sent to DeepSeek. Plain Text mode skips OCR entirely.
 
 ### Highlights
 
@@ -140,13 +145,17 @@ Images never leave the machine: OCR runs on Apple's Vision framework, and only *
 |---|---|
 | **Local OCR** | Screenshots are OCR'd in memory; nothing is uploaded or persisted |
 | **Structured extraction** | DeepSeek returns a fixed JSON schema: title, type, start/end, location, evidence |
+| **Plain-text input** | Plain Text mode skips OCR and sends the text straight to DeepSeek |
 | **Typed events** | deadline / appointment / exam / birthday / activity / other |
 | **Per-type calendars** | Each type lands in its own Apple Calendar, **colour-coded**: exam = red, birthday = purple, deadline = orange, appointment = blue, activity = green |
+| **Per-type reminder lists** | The same split for Apple Reminders; the due date is the start time, all-day/birthdays use a date-only due date and repeat yearly |
+| **Two destinations** | Switch the write target between Apple Calendar and Apple Reminders in one click |
 | **Conflict detection** | Checks overlaps before writing; skipped by default, with an opt-in "write anyway" per card |
 | **All-day & birthdays** | All-day events show date-only pickers; birthdays are all-day and repeat yearly |
 | **Batch shift** | Move several events by ±1h / ±1d / +1w or a custom offset, and see **exactly which event collided with which** |
 | **Batch delete** | *Delete Selected* removes only checked events; *Clear all* (the blunt instrument) is demoted to a secondary action |
 | **Bilingual UI** | One-click 中 / EN toggle — even the Apple Calendar category names follow the language |
+| **Remembered choices** | Input source and write destination persist across launches |
 | **Managed tags** | Written events carry an ownership tag, so the panel only ever shows events this app created |
 | **Keychain only** | The API key lives in the macOS Keychain; never in code, logs, or the UI |
 | **Redacted logs** | Counts and types only; a second redaction pass runs on export |
@@ -157,6 +166,7 @@ Images never leave the machine: OCR runs on Apple's Vision framework, and only *
 - **macOS 15 (Sequoia)** or newer
 - A **DeepSeek API key** (bring your own, pay-per-use)
 - **Full Calendar access** (not "Write Only" — conflicts can only be detected by reading existing events)
+- **Full Reminders access** when writing to Apple Reminders
 - **Command Line Tools** with Swift 6.x to build; full Xcode is **not** required
 
 ### Setup (both steps required)

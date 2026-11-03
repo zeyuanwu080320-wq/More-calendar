@@ -26,7 +26,7 @@ struct SchoolEventInboxApp: App {
 
                 Divider()
 
-                Button(L10n.t("写入 Apple 日历", "Write to Apple Calendar")) {
+                Button(model.writeActionTitle) {
                     model.writeToCalendar()
                 }
                 .disabled(!model.canTapWrite)
@@ -40,6 +40,7 @@ struct SchoolEventInboxApp: App {
                 Button(L10n.t("管理事件", "Managed Events")) {
                     model.showManagedEvents = true
                 }
+                .disabled(model.managedEventProvider == nil)
                 .keyboardShortcut("m", modifiers: [.command, .shift])
             }
         }
