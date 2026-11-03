@@ -475,6 +475,21 @@ struct SelfTest {
 
         // A birthday keeps the calendar's yearly-recurrence intent, and its due
         // date stays date-only even when the model marked it as a timed event.
+        // 时区：必须按本地偏移序列化，不能悄悄转成 UTC
+        let tzDraft = DraftFactory.makeDraft(
+            from: makeEvent(type: .appointment, start: "2026-11-20T14:00:00+08:00", allDay: false, location: nil),
+            now: TestClock.referenceNow,
+            timeZone: TestClock.timeZone,
+            calendar: TestClock.calendar
+        )
+        let tzBody = GoogleCalendarMapper.makeEventBody(
+            from: tzDraft,
+            timeZone: TestClock.timeZone,
+            calendar: TestClock.calendar
+        )
+        h.equal(tzBody.start?.dateTime, "2026-11-20T14:00:00+08:00", "定时事件按本地偏移序列化（不是 UTC）")
+        h.equal(tzBody.start?.timeZone, "Asia/Shanghai", "timeZone 字段与偏移一致")
+
         let birthdayDraft = DraftFactory.makeDraft(
             from: makeEvent(type: .birthday, start: "2026-03-20T00:00:00+08:00", allDay: true, location: nil),
             now: TestClock.referenceNow,

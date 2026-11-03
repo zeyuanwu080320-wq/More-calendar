@@ -113,7 +113,10 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
                 .filter { ConflictDetector.overlaps(interval, DateInterval(start: $0.start, end: $0.end)) }
                 .sorted { $0.start < $1.start }
         } catch {
-            throw targetError(error)
+            // 冲突预检只是提示性能力：它失败不应该让整条写入失败。
+            // 记录原因后按「无冲突」继续，真正的写入错误会在 saveEvents 里暴露。
+            GoogleDiagnostics.log("findConflicts: 预检失败，按无冲突继续：\(error.localizedDescription)")
+            return []
         }
     }
 
@@ -125,6 +128,9 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
             GoogleDiagnostics.log("saveEvents: 使用日历 id=\(calendarID) 条数=\(drafts.count)")
             for draft in drafts {
                 let body = GoogleCalendarMapper.makeEventBody(from: draft)
+                GoogleDiagnostics.log(
+                    "saveEvents: 载荷 summary=\(body.summary ?? "-") start=\(body.start?.dateTime ?? body.start?.date ?? "-") tz=\(body.start?.timeZone ?? "-")"
+                )
                 let request = try GoogleAPIRequest.json(
                     "POST",
                     path: "/calendars/\(calendarID)/events",
@@ -248,7 +254,8 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
                 return GoogleCalendarMapper.managedEventID(calendarID: parts.calendarID, eventID: parent)
             }
             return id
-        } catch GoogleAPIError.notFound {
+        } catch let GoogleAPIError.notFound(method, path) {
+            GoogleDiagnostics.log("删除失败：404 \(method) \(path)")
             throw TargetProviderError.eventNotFound
         } catch {
             throw targetError(error)
@@ -267,7 +274,8 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
             )
             try await api().send(request)
             return 1
-        } catch GoogleAPIError.notFound {
+        } catch let GoogleAPIError.notFound(method, path) {
+            GoogleDiagnostics.log("删除失败：404 \(method) \(path)")
             throw TargetProviderError.eventNotFound
         } catch {
             throw targetError(error)
@@ -346,6 +354,11 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
     public func selectCalendar(_ entry: GoogleCalendarListEntry) {
         selectedCalendar = entry
         UserDefaults.standard.set(entry.id, forKey: Self.selectedCalendarDefaultsKey)
+        // 日历自己的时区与本机时区不一致时，事件"看起来"会差好几个小时，
+        // 这是 Google 按日历时区渲染的结果，不是数据错误——留痕便于确认。
+        GoogleDiagnostics.log(
+            "selectCalendar: id=\(entry.id) 日历时区=\(entry.timeZone ?? "-") 本机时区=\(TimeZone.current.identifier)"
+        )
     }
 
     /// 载入已保存的日历；没有就用 primary。

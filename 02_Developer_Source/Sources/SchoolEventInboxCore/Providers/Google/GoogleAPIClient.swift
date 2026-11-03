@@ -56,7 +56,7 @@ public enum GoogleAPIError: LocalizedError, Equatable, Sendable {
     case unauthorized
     case forbidden(String)
     case rateLimited(retryAfter: TimeInterval?)
-    case notFound
+    case notFound(method: String, path: String)
     case http(status: Int, message: String)
     case decoding(String)
     case network(String)
@@ -73,8 +73,8 @@ public enum GoogleAPIError: LocalizedError, Equatable, Sendable {
                 return "Google 接口限流，请约 \(Int(retryAfter)) 秒后重试"
             }
             return "Google 接口限流，请稍后重试"
-        case .notFound:
-            return "目标日历或事件不存在（可能已被删除）"
+        case .notFound(let method, let path):
+            return "Google 目标不存在（404）：\(method) \(path)"
         case .http(let status, let message):
             return "Google 接口返回 \(status)：\(message)"
         case .decoding(let message):
@@ -200,7 +200,7 @@ public actor GoogleAPIClient {
         }
 
         do {
-            try validate(status: response.statusCode, data: data, response: response)
+            try validate(status: response.statusCode, data: data, response: response, method: request.method, path: request.path)
         } catch {
             let parsed = Self.parseError(data)
             GoogleDiagnostics.log("HTTP 失败 \(response.statusCode) reason=\(parsed.reason ?? "-") message=\(parsed.message ?? "-")")
@@ -237,7 +237,7 @@ public actor GoogleAPIClient {
         return urlRequest
     }
 
-    private func validate(status: Int, data: Data, response: HTTPURLResponse) throws {
+    private func validate(status: Int, data: Data, response: HTTPURLResponse, method: String, path: String) throws {
         switch status {
         case 200..<300:
             return
@@ -250,7 +250,7 @@ public actor GoogleAPIClient {
             }
             throw GoogleAPIError.forbidden(parsed.message ?? "权限不足")
         case 404, 410:
-            throw GoogleAPIError.notFound
+            throw GoogleAPIError.notFound(method: method, path: path)
         case 429:
             throw GoogleAPIError.rateLimited(retryAfter: Self.retryAfter(from: response))
         default:
