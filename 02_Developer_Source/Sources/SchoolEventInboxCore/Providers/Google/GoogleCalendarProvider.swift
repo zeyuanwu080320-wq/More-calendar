@@ -50,6 +50,12 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
     }
 
     /// 读 Keychain 判断是否已连接。**不要在启动时自动调用**：Keychain 可能弹窗。
+    /// 是否存有 refresh_token（用于判断要不要去打网络）。
+    public func hasStoredCredential() async -> Bool {
+        guard let manager = try? makeManager() else { return false }
+        return await manager.hasStoredRefreshToken()
+    }
+
     public func refreshAuthorizationState() async {
         guard let manager = try? makeManager() else {
             authorized = false
@@ -63,8 +69,16 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
 
     @discardableResult
     public func requestAccess() async throws -> Bool {
+        GoogleDiagnostics.log("requestAccess: 进入")
         do {
-            let manager = try makeManager()
+            let manager: GoogleOAuthManager
+            do {
+                manager = try makeManager()
+            } catch {
+                GoogleDiagnostics.log("requestAccess: 凭据加载失败 \(error.localizedDescription)")
+                throw error
+            }
+            GoogleDiagnostics.log("requestAccess: 凭据已加载，开始授权")
             _ = try await manager.authorize()
             authorized = true
             await loadSelectedCalendarIfNeeded(forceList: true)
@@ -430,11 +444,16 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
     private func targetError(_ error: Error) -> Error {
         if let error = error as? TargetProviderError { return error }
         if let error = error as? GoogleAPIError {
-            if case .unauthorized = error { return TargetProviderError.accessDenied }
+            if case .unauthorized = error {
+                // 401 是「令牌失效」而不是「系统权限被拒」，必须说清楚。
+                return TargetProviderError.authorizationRequired("Google 授权已失效")
+            }
             return TargetProviderError.providerUnavailable(error.localizedDescription)
         }
         if let error = error as? GoogleOAuthError {
-            if case .notAuthorized = error { return TargetProviderError.accessDenied }
+            if case .notAuthorized = error {
+                return TargetProviderError.authorizationRequired("尚未连接 Google 账户")
+            }
             return TargetProviderError.providerUnavailable(error.localizedDescription)
         }
         return TargetProviderError.saveFailed(error.localizedDescription)

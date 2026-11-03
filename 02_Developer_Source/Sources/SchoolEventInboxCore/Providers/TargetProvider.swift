@@ -34,8 +34,19 @@ public enum TargetProviderError: LocalizedError, Equatable, Sendable {
     case notManagedEvent
     case recurringBatchUnsupported
     case saveFailed(String)
+
+    /// 是否属于「需要重新授权」类错误，供调用方决定要不要刷新授权状态。
+    public var isAuthorizationFailure: Bool {
+        switch self {
+        case .accessDenied, .authorizationRequired: return true
+        default: return false
+        }
+    }
     /// 远程目标不可用（网络、令牌、配置）。与「权限被拒绝」区分开。
     case providerUnavailable(String)
+    /// 尚未连接或授权已失效（远程目标专用）。**与本地系统权限无关**，
+    /// 文案里不能出现「系统设置」，否则会把人引到错误的排查方向。
+    case authorizationRequired(String)
 
     public var errorDescription: String? {
         switch self {
@@ -47,6 +58,7 @@ public enum TargetProviderError: LocalizedError, Equatable, Sendable {
         case .recurringBatchUnsupported: return "循环事件不支持批量平移，请单条修改"
         case .saveFailed(let reason): return "写入失败：\(reason)"
         case .providerUnavailable(let reason): return "目标暂不可用：\(reason)"
+        case .authorizationRequired(let reason): return "需要重新连接：\(reason)"
         }
     }
 }

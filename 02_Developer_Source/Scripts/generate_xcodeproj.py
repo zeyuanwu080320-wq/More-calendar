@@ -58,6 +58,7 @@ CORE_PROVIDERS = [
     "GoogleOAuthClient.swift",
 ]
 CORE_GOOGLE_PROVIDERS = [
+    "GoogleDiagnostics.swift",
     "GoogleOAuth.swift",
     "GoogleTokenStore.swift",
     "GoogleOAuthLoopbackServer.swift",

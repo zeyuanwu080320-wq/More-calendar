@@ -20,8 +20,21 @@ public actor GoogleOAuthManager: GoogleTokenProvider {
     /// 它只能拦截自定义 scheme（或 https universal link），拦不到 `http://localhost`，
     /// 而 Google 桌面端只支持 loopback。
     public static let openInSystemBrowser: @Sendable (URL) -> Void = { url in
+        GoogleDiagnostics.log("openURL: 请求打开系统浏览器 host=\(url.host ?? "?") scheme=\(url.scheme ?? "?")")
         Task { @MainActor in
-            NSWorkspace.shared.open(url)
+            // 显式要求激活，避免浏览器在后台悄悄打开而用户以为没反应。
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.open(url, configuration: configuration) { app, error in
+                if let error {
+                    GoogleDiagnostics.log("openURL: 失败 \(error.localizedDescription)")
+                } else {
+                    GoogleDiagnostics.log("openURL: 成功 app=\(app?.bundleIdentifier ?? "unknown")")
+                }
+                Task { @MainActor in
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
         }
     }
 
@@ -92,17 +105,39 @@ public actor GoogleOAuthManager: GoogleTokenProvider {
     /// 调用方的线程会被挂起直到浏览器回调、超时或失败。
     @discardableResult
     public func authorize(timeout: TimeInterval = 180) async throws -> String {
+        GoogleDiagnostics.log("authorize: 开始")
         let server = makeServer()
-        let port = try await server.start()
+        GoogleDiagnostics.log("authorize: 启动本地回调监听…")
+        let port: UInt16
+        do {
+            port = try await server.start()
+        } catch {
+            GoogleDiagnostics.log("authorize: 监听启动失败 \(error.localizedDescription)")
+            throw error
+        }
+        GoogleDiagnostics.log("authorize: 监听就绪 port=\(port)")
         // 注册值是 http://localhost（无路径）。官方文档的 loopback 示例也不带路径，
         // 因此这里**不能**加 /callback：Google 对非端口部分是按精确匹配处理的。
         let redirectURI = URL(string: "http://localhost:\(port)")!
         defer { Task { await server.stop() } }
 
-        let request = try GoogleAuthorizationRequest(client: client, redirectURI: redirectURI)
+        let request: GoogleAuthorizationRequest
+        do {
+            request = try GoogleAuthorizationRequest(client: client, redirectURI: redirectURI)
+        } catch {
+            GoogleDiagnostics.log("authorize: 授权 URL 构造失败 \(error.localizedDescription)")
+            throw error
+        }
+        let queryCount = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.count ?? 0
+        GoogleDiagnostics.log("authorize: 授权 URL 就绪 host=\(request.url.host ?? "?") 参数=\(queryCount) redirect=\(redirectURI.absoluteString)")
+        // 自动打开失败时的兜底：用户可手动粘贴这条 URL。
+        GoogleDiagnostics.log("authorize: 若浏览器未弹出，可手动访问 \(request.url.absoluteString)")
+
         openURL(request.url)
+        GoogleDiagnostics.log("authorize: 已调用 openURL，等待回调（最长 \(Int(timeout)) 秒）")
 
         let callback = try await server.waitForCallback(timeout: timeout)
+        GoogleDiagnostics.log("authorize: 收到回调 error=\(callback.error ?? "nil") hasCode=\(callback.code != nil)")
 
         if let error = callback.error {
             throw GoogleOAuthError.authorizationDenied(callback.errorDescription ?? error)
@@ -128,6 +163,7 @@ public actor GoogleOAuthManager: GoogleTokenProvider {
             throw GoogleOAuthError.tokenExchangeFailed("无法把 refresh_token 写入 Keychain")
         }
         cache(token)
+        GoogleDiagnostics.log("authorize: 令牌交换成功，refresh_token 已写入 Keychain")
         return token.accessToken
     }
 

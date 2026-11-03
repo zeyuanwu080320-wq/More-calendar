@@ -755,6 +755,42 @@ struct SelfTest {
             "ManagedEvent.id 可拆分"
         )
 
+        // OAuth 全流程：监听 → 模拟浏览器回调 → 换 token → 写入存储
+        do {
+            let oauthTransport = StubGoogleTransport(responses: [
+                (200, Data(#"{"access_token":"at-1","refresh_token":"rt-1","expires_in":3600,"token_type":"Bearer"}"#.utf8))
+            ])
+            let store = InMemorySecretStore()
+            let oauthClient = GoogleOAuthClient(clientID: "cid", clientSecret: "sec")
+            let manager = GoogleOAuthManager(
+                client: oauthClient,
+                tokenStore: store,
+                transport: oauthTransport,
+                openURL: { url in
+                    guard
+                        let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                        let redirect = components.queryItems?.first(where: { $0.name == "redirect_uri" })?.value,
+                        let state = components.queryItems?.first(where: { $0.name == "state" })?.value,
+                        var callback = URLComponents(string: redirect)
+                    else { return }
+                    callback.queryItems = [
+                        URLQueryItem(name: "code", value: "auth-code"),
+                        URLQueryItem(name: "state", value: state)
+                    ]
+                    if let finalURL = callback.url {
+                        Task { _ = try? await URLSession.shared.data(from: finalURL) }
+                    }
+                }
+            )
+            let token = try await manager.authorize(timeout: 8)
+            h.equal(token, "at-1", "OAuth 全流程拿到 access_token")
+            let stored = (try? store.readSecret()) ?? nil
+            h.equal(stored, "rt-1", "refresh_token 已写入存储")
+            h.equal(oauthTransport.requestCount, 1, "只调用一次 token 端点")
+        } catch {
+            h.fail("OAuth 全流程失败：\(error)")
+        }
+
         // 401 → 刷新 → 重试（只刷一次）
         let transport = StubGoogleTransport(responses: [
             (401, Data()),
@@ -1180,6 +1216,26 @@ private func makeEvent(
         needsConfirmation: needsConfirmation,
         notes: notes
     )
+}
+
+private final class InMemorySecretStore: SecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: String?
+
+    func readSecret() throws -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
+
+    func saveSecret(_ secret: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        value = secret
+    }
+
+    func deleteSecret() throws {
+        lock.lock(); defer { lock.unlock() }
+        value = nil
+    }
 }
 
 /// 记录请求并按序返回预设响应的传输桩。

@@ -217,6 +217,12 @@ final class AppModel: ObservableObject {
 
     /// 拉取可写的 Google 日历列表，并恢复上次选择（没有就用 primary）。
     func refreshGoogleCalendars() async {
+        // 没有 refresh_token 就发请求必然 401，只会在界面上制造一条误导性错误。
+        guard await googleTarget.hasStoredCredential() else {
+            googleCalendars = []
+            GoogleDiagnostics.log("refreshGoogleCalendars: 尚未授权，跳过日历列表请求")
+            return
+        }
         do {
             googleCalendars = try await googleTarget.listCalendars()
             let stored = UserDefaults.standard.string(forKey: GoogleCalendarProvider.selectedCalendarDefaultsKey) ?? ""
@@ -229,6 +235,7 @@ final class AppModel: ObservableObject {
             }
         } catch {
             googleCalendars = []
+            GoogleDiagnostics.log("refreshGoogleCalendars: 失败 \(shortError(error))")
             errorMessage = shortError(error)
         }
     }
@@ -375,11 +382,19 @@ final class AppModel: ObservableObject {
     }
 
     func requestCalendarAccess() {
-        guard calendarState == .notDetermined || calendarState == .writeOnly else { return }
+        GoogleDiagnostics.log("requestCalendarAccess: 目标=\(writeTarget.rawValue) 状态=\(calendarState.rawValue)")
+        // Google 是 OAuth：任何时候都允许「重新连接」，不受本地权限状态限制
+        // （本地状态只对 Apple 日历/提醒事项有意义）。
+        guard writeTarget == .googleCalendar || calendarState == .notDetermined || calendarState == .writeOnly else {
+            GoogleDiagnostics.log("requestCalendarAccess: 被前置条件拦截，未发起授权")
+            return
+        }
         Task {
             do {
                 _ = try await target.requestAccess()
+                GoogleDiagnostics.log("requestCalendarAccess: 授权流程返回成功")
             } catch {
+                GoogleDiagnostics.log("requestCalendarAccess: 授权失败 \(shortError(error))")
                 switch writeTarget {
                 case .calendar:
                     errorMessage = "请求日历权限失败：\(shortError(error))"
@@ -805,7 +820,7 @@ final class AppModel: ObservableObject {
                     failureMessages.append("\(draft.title)：\(shortError(error))")
                     drafts[index] = draft
                     if let calendarError = error as? TargetProviderError,
-                       calendarError == .accessDenied {
+                       calendarError.isAuthorizationFailure {
                         refreshCalendarStatus()
                     }
                 }
