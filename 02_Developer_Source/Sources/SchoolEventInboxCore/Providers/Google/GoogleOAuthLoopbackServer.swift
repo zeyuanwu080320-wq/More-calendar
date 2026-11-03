@@ -184,8 +184,11 @@ public actor GoogleOAuthLoopbackServer {
         let parts = firstLine.split(separator: " ")
         guard parts.count >= 2 else { return nil }
         let target = String(parts[1])
+        let path = target.split(separator: "?").first.map(String.init) ?? target
         guard let components = URLComponents(string: "http://127.0.0.1" + target),
-              components.path == "/callback" else { return nil }
+              // 注册的 redirect_uri 不带路径，浏览器会请求 "/"；同时兼容历史 /callback。
+              ["", "/", "/callback"].contains(components.path.isEmpty ? "" : components.path),
+              path.hasPrefix("/") else { return nil }
         let items = components.queryItems ?? []
         func value(_ name: String) -> String? {
             items.first(where: { $0.name == name })?.value

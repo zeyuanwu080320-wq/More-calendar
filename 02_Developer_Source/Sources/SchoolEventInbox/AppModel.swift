@@ -387,10 +387,16 @@ final class AppModel: ObservableObject {
                     errorMessage = "请求提醒事项权限失败：\(shortError(error))"
                 case .googleCalendar:
                     errorMessage = "连接 Google 账户失败：\(shortError(error))"
+                    // OAuth 失败不写入日历，但必须留下可导出的诊断记录，
+                    // 否则用户只能截图，无法定位 redirect_uri/mismatch 这类问题。
+                    appendLog(LogRecord(kind: "google_auth", eventCount: 0, error: shortError(error)))
                 }
             }
             refreshCalendarStatus()
             if writeTarget == .googleCalendar {
+                if errorMessage == nil {
+                    appendLog(LogRecord(kind: "google_auth", eventCount: 0))
+                }
                 await refreshGoogleCalendars()
             }
         }

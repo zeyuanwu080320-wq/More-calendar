@@ -16,6 +16,8 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
     public var titleLanguage: ManagedCalendarLanguage = .chinese
 
     private let transport: any GoogleHTTPTransport
+    /// 允许自测注入桩令牌；生产路径为 nil，走 Keychain + OAuth。
+    private let injectedTokenProvider: (any GoogleTokenProvider)?
     private var oauthManager: GoogleOAuthManager?
     private var apiClient: GoogleAPIClient?
 
@@ -23,8 +25,12 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
     private var authorized = false
     private var selectedCalendar: GoogleCalendarListEntry?
 
-    public init(transport: any GoogleHTTPTransport = URLSessionTransport()) {
+    public init(
+        transport: any GoogleHTTPTransport = URLSessionTransport(),
+        tokenProvider: (any GoogleTokenProvider)? = nil
+    ) {
         self.transport = transport
+        self.injectedTokenProvider = tokenProvider
     }
 
     // MARK: - TargetProvider
@@ -148,6 +154,94 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
 
     @discardableResult
     public func deleteManagedEvent(id: String) async throws -> Int {
+        let seriesID = try await resolveSeriesID(for: id)
+        return try await deleteEvent(id: seriesID)
+    }
+
+    public func deleteManagedEvents(ids: [String]) async throws -> ManagedDeleteResult {
+        // 同一系列的多个实例先归并到父事件，避免第二个实例 404 被误记为失败。
+        var roots = Set<String>()
+        var failed = 0
+        for id in ids {
+            do {
+                roots.insert(try await resolveSeriesID(for: id))
+            } catch {
+                failed += 1
+            }
+        }
+        var deleted = 0
+        for root in roots.sorted() {
+            do {
+                deleted += try await deleteEvent(id: root)
+            } catch {
+                failed += 1
+            }
+        }
+        return ManagedDeleteResult(deleted: deleted, failed: failed)
+    }
+
+    @discardableResult
+    public func deleteAllManagedEvents() async throws -> Int {
+        let calendarID = try selectedCalendarID()
+        do {
+            let now = Date()
+            let calendar = Calendar.current
+            let start = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+            let end = calendar.date(byAdding: .year, value: 1, to: now) ?? now
+            let events = try await listEvents(
+                calendarID: calendarID,
+                timeMin: start,
+                timeMax: end,
+                managedOnly: true
+            )
+            // 循环事件按父事件归并，否则会反复删同一个系列。
+            var roots = Set<String>()
+            for event in events {
+                guard let eventID = event.id else { continue }
+                let rootEventID = event.recurringEventId ?? eventID
+                roots.insert(GoogleCalendarMapper.managedEventID(calendarID: calendarID, eventID: rootEventID))
+            }
+            var removed = 0
+            for root in roots.sorted() {
+                do {
+                    removed += try await deleteEvent(id: root)
+                } catch {
+                    // 继续删剩下的，让调用方拿到部分结果。
+                }
+            }
+            return removed
+        } catch {
+            throw targetError(error)
+        }
+    }
+
+    /// 把「可能是循环实例」的 id 解析成系列根 id。
+    ///
+    /// Google 在 `singleEvents=true` 下列出的是实例，实例的 `recurringEventId`
+    /// 指向父事件。只删实例的话，下一次同步（或下一年）它又会冒出来，
+    /// 所以删除前必须先查一次父事件。
+    private func resolveSeriesID(for id: String) async throws -> String {
+        guard let parts = GoogleCalendarMapper.splitManagedEventID(id) else {
+            throw TargetProviderError.eventNotFound
+        }
+        do {
+            let event = try await api().send(
+                GoogleAPIRequest(path: "/calendars/\(escape(parts.calendarID))/events/\(escape(parts.eventID))"),
+                as: GoogleEvent.self
+            )
+            if let parent = event.recurringEventId, !parent.isEmpty {
+                return GoogleCalendarMapper.managedEventID(calendarID: parts.calendarID, eventID: parent)
+            }
+            return id
+        } catch GoogleAPIError.notFound {
+            throw TargetProviderError.eventNotFound
+        } catch {
+            throw targetError(error)
+        }
+    }
+
+    /// 删除单个事件（不解析系列）。
+    private func deleteEvent(id: String) async throws -> Int {
         guard let parts = GoogleCalendarMapper.splitManagedEventID(id) else {
             throw TargetProviderError.eventNotFound
         }
@@ -163,33 +257,6 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
         } catch {
             throw targetError(error)
         }
-    }
-
-    public func deleteManagedEvents(ids: [String]) async throws -> ManagedDeleteResult {
-        var deleted = 0
-        var failed = 0
-        for id in ids {
-            do {
-                deleted += try await deleteManagedEvent(id: id)
-            } catch {
-                failed += 1
-            }
-        }
-        return ManagedDeleteResult(deleted: deleted, failed: failed)
-    }
-
-    @discardableResult
-    public func deleteAllManagedEvents() async throws -> Int {
-        let events = try await fetchManagedEvents()
-        var removed = 0
-        for event in events {
-            do {
-                removed += try await deleteManagedEvent(id: event.id)
-            } catch {
-                // 继续删剩下的，让调用方拿到部分结果。
-            }
-        }
-        return removed
     }
 
     /// 批量平移。
@@ -302,8 +369,8 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
 
     private func api() throws -> GoogleAPIClient {
         if let apiClient { return apiClient }
-        let manager = try makeManager()
-        let client = GoogleAPIClient(transport: transport, tokenProvider: manager)
+        let tokenProvider: any GoogleTokenProvider = try injectedTokenProvider ?? makeManager()
+        let client = GoogleAPIClient(transport: transport, tokenProvider: tokenProvider)
         apiClient = client
         return client
     }

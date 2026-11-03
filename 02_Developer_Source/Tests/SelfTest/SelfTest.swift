@@ -625,6 +625,51 @@ struct SelfTest {
             h.fail("loopback 集成失败：\(error)")
         }
 
+        // 注册的 redirect_uri 不带路径，浏览器会打 "/" 而不是 "/callback"
+        let rootPath = Data("GET /?code=abc&state=xyz HTTP/1.1\r\n\r\n".utf8)
+        h.equal(GoogleOAuthLoopbackServer.parseCallback(from: rootPath)?.code, "abc", "接受根路径回调")
+
+        // 循环事件：实例删除必须落到系列父事件
+        let instance = GoogleEvent(
+            id: "inst-1",
+            summary: "生日",
+            notes: ManagedEventMetadata.managedNotes(original: "", type: .birthday),
+            start: GoogleEventDateTime(date: "2026-03-20"),
+            end: GoogleEventDateTime(date: "2026-03-21"),
+            recurringEventId: "series-9"
+        )
+        if let managedInstance = GoogleCalendarMapper.managedEvent(
+            from: instance,
+            calendarID: "primary",
+            calendarName: "我",
+            timeZone: TestClock.timeZone
+        ) {
+            h.check(managedInstance.isRecurring, "循环实例（无 recurrence 字段）仍标记为循环")
+        } else {
+            h.fail("循环实例应能映射")
+        }
+
+        let deleteTransport = StubGoogleTransport(responses: [
+            (200, Data(#"{"id":"inst-1","recurringEventId":"series-9"}"#.utf8)),
+            (204, Data())
+        ])
+        let provider = await GoogleCalendarProvider(
+            transport: deleteTransport,
+            tokenProvider: StubGoogleTokenProvider()
+        )
+        do {
+            let removed = try await provider.deleteManagedEvent(id: "primary/inst-1")
+            h.equal(removed, 1, "删除循环实例成功")
+            h.equal(deleteTransport.requestCount, 2, "先 GET 解析系列，再 DELETE")
+            h.equal(deleteTransport.lastRequest?.httpMethod, "DELETE", "最终方法是 DELETE")
+            h.check(
+                deleteTransport.lastRequest?.url?.path.hasSuffix("events/series-9") == true,
+                "删除的是系列父事件而不是实例"
+            )
+        } catch {
+            h.fail("循环实例删除链路失败：\(error)")
+        }
+
         // 写映射
         let allDayDraft = DraftFactory.makeDraft(
             from: makeEvent(type: .exam, start: "2026-03-05T00:00:00+08:00", allDay: true, location: nil),
@@ -1150,6 +1195,11 @@ private final class StubGoogleTransport: GoogleHTTPTransport, @unchecked Sendabl
     var requestCount: Int {
         lock.lock(); defer { lock.unlock() }
         return requests.count
+    }
+
+    var lastRequest: URLRequest? {
+        lock.lock(); defer { lock.unlock() }
+        return requests.last
     }
 
     var authorizationHeaders: [String] {

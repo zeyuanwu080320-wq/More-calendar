@@ -56,6 +56,8 @@ public struct GoogleEvent: Codable, Equatable, Sendable {
     public var colorId: String?
     public var extendedProperties: GoogleExtendedProperties?
     public var transparency: String?
+    /// 循环事件的**实例**会带上父事件 id；删除整条系列时要用它。
+    public var recurringEventId: String?
 
     public init(
         id: String? = nil,
@@ -68,7 +70,8 @@ public struct GoogleEvent: Codable, Equatable, Sendable {
         status: String? = nil,
         colorId: String? = nil,
         extendedProperties: GoogleExtendedProperties? = nil,
-        transparency: String? = nil
+        transparency: String? = nil,
+        recurringEventId: String? = nil
     ) {
         self.id = id
         self.summary = summary
@@ -81,10 +84,12 @@ public struct GoogleEvent: Codable, Equatable, Sendable {
         self.colorId = colorId
         self.extendedProperties = extendedProperties
         self.transparency = transparency
+        self.recurringEventId = recurringEventId
     }
 
     enum CodingKeys: String, CodingKey {
         case id, summary, location, start, end, recurrence, status, colorId, extendedProperties, transparency
+        case recurringEventId
         case notes = "description"
     }
 }

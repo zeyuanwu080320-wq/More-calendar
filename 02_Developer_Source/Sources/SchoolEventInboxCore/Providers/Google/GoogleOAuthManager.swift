@@ -94,7 +94,9 @@ public actor GoogleOAuthManager: GoogleTokenProvider {
     public func authorize(timeout: TimeInterval = 180) async throws -> String {
         let server = makeServer()
         let port = try await server.start()
-        let redirectURI = URL(string: "http://localhost:\(port)/callback")!
+        // 注册值是 http://localhost（无路径）。官方文档的 loopback 示例也不带路径，
+        // 因此这里**不能**加 /callback：Google 对非端口部分是按精确匹配处理的。
+        let redirectURI = URL(string: "http://localhost:\(port)")!
         defer { Task { await server.stop() } }
 
         let request = try GoogleAuthorizationRequest(client: client, redirectURI: redirectURI)

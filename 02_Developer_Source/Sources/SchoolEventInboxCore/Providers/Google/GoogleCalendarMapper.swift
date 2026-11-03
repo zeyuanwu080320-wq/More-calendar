@@ -114,7 +114,9 @@ public enum GoogleCalendarMapper {
             end: interval.end,
             calendarName: calendarName,
             isAllDay: event.start?.date != nil,
-            isRecurring: !(event.recurrence ?? []).isEmpty,
+            // 展开后的实例不带 recurrence，而是带 recurringEventId；
+            // 两者任一成立都说明删除会波及整条系列，UI 必须提示。
+            isRecurring: !(event.recurrence ?? []).isEmpty || event.recurringEventId != nil,
             type: eventType(from: event),
             notes: event.notes
         )
