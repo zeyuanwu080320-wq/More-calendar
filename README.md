@@ -116,7 +116,7 @@ cd 02_Developer_Source
 ### 隐私与边界
 
 - 只把**邮件正文和 OCR 文本**发给 DeepSeek；图片二进制不发
-- 不做 OAuth、不后台监听邮箱、不云同步、无账号体系
+- 不后台监听邮箱、不云同步、无账号体系；Google Calendar 接入使用 OAuth，其凭据的**运行时真实路径**是 `~/Library/Application Support/More calendar/google_client_secret.json`——仓库里 `02_Developer_Source/Support/` 的那份**仅作版本备份**，不会被 `build_app.sh` 打进 `.app`
 - 不是官方工具，不保证"绝不漏事件"——请逐条核对后再写入
 - `Clear all` 只删带托管标签的事件；删除日历分类需在 Apple 日历里手动操作
 
@@ -229,7 +229,7 @@ Build and launch:
 ### Privacy and scope
 
 - Only the **email body and OCR text** are sent to DeepSeek; image bytes never are
-- No OAuth, no mailbox monitoring, no cloud sync, no accounts
+- No mailbox monitoring, no cloud sync, no accounts; the Google Calendar integration uses OAuth, and its credential is read at runtime from `~/Library/Application Support/More calendar/google_client_secret.json` — the copy under `02_Developer_Source/Support/` is a **version backup only** and is never bundled into the `.app`
 - Not an official tool and no guarantee that nothing is missed — review each card
 - *Clear all* only removes tagged events; deleting calendar categories is manual, in Apple Calendar
 

@@ -38,6 +38,15 @@ secrets*
 *_secret*
 !*.example
 
+# --- Google OAuth 客户端凭据 / Google OAuth client -------------------------
+# 用户自备的桌面端 OAuth 凭据。虽然 Google 对 installed app 的 client_secret
+# 不作机密对待，但**绝不入库**：一旦提交，历史里就再也删不干净。
+google_client_secret.json
+*client_secret*.json
+# 也不要把凭据塞进 App 资源目录，避免随 Release zip 分发
+**/Resources/google_client_secret.json
+**/Resources/*client_secret*.json
+
 # --- macOS / Xcode ---------------------------------------------------------
 .DS_Store
 .AppleDouble

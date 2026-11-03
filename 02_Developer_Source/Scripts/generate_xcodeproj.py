@@ -55,6 +55,7 @@ CORE_PROVIDERS = [
     "ManagedEventMetadata.swift",
     "AppleCalendarProvider.swift",
     "AppleRemindersProvider.swift",
+    "GoogleOAuthClient.swift",
 ]
 CORE_UTILITIES = ["FlexibleDateParser.swift"]
 

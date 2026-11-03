@@ -43,6 +43,9 @@ struct SelfTest {
         harness.section("输入源组装（邮件 vs 纯文本）")
         runInputComposerTests(harness)
 
+        harness.section("Google 凭据加载")
+        runGoogleCredentialTests(harness)
+
         harness.section("日期/时区/歧义")
         runDateTests(harness)
 
@@ -534,6 +537,82 @@ struct SelfTest {
         h.equal(InputComposer.logInputType(source: .text, emailBody: "", imageCount: 0), "text", "纯文本日志类型为 text")
         h.equal(InputComposer.logInputType(source: .email, emailBody: "", imageCount: 2), "image", "仅图片日志类型为 image")
         h.equal(InputComposer.logInputType(source: .email, emailBody: "x", imageCount: 2), "email", "混合输入仍记为 email")
+    }
+
+    /// 凭据加载是 Google 接入的安全边界：既要读得到，又不能把 secret 泄露到日志。
+    private static func runGoogleCredentialTests(_ h: Harness) {
+        let installed = Data("""
+        {"installed":{"client_id":"123-abc.apps.googleusercontent.com","project_id":"demo",
+        "auth_uri":"https://accounts.google.com/o/oauth2/v2/auth",
+        "token_uri":"https://oauth2.googleapis.com/token",
+        "client_secret":"s3cret-value","redirect_uris":["http://localhost"]}}
+        """.utf8)
+
+        do {
+            let client = try GoogleOAuthClientLoader.parse(installed)
+            h.equal(client.clientID, "123-abc.apps.googleusercontent.com", "解析 installed.client_id")
+            h.equal(client.redirectURIs.first, "http://localhost", "解析 redirect_uris（loopback）")
+            h.equal(client.tokenURI?.absoluteString, "https://oauth2.googleapis.com/token", "解析 token_uri")
+            h.equal(client.projectID, "demo", "解析 project_id")
+            h.check(!client.redactedSummary.contains("s3cret-value"), "redactedSummary 不泄露 client_secret")
+        } catch {
+            h.fail("installed 凭据解析失败：\(error)")
+        }
+
+        let web = Data("""
+        {"web":{"client_id":"web-id","client_secret":"web-secret","redirect_uris":["https://example.com/cb"]}}
+        """.utf8)
+        h.equal((try? GoogleOAuthClientLoader.parse(web))?.clientID, "web-id", "也接受 web 顶层节点")
+
+        do {
+            _ = try GoogleOAuthClientLoader.parse(Data("not json".utf8))
+            h.fail("非法 JSON 应报错")
+        } catch let error as GoogleOAuthClientError {
+            h.check(error != .missing, "非法 JSON 报格式错误而非 missing")
+        } catch {
+            h.fail("非法 JSON 的错误类型不符")
+        }
+
+        do {
+            _ = try GoogleOAuthClientLoader.parse(Data(#"{"installed":{"client_id":"x"}}"#.utf8))
+            h.fail("缺少 client_secret 应报错")
+        } catch let error as GoogleOAuthClientError {
+            if case .malformed(let reason) = error {
+                h.check(reason.contains("client_secret"), "缺 client_secret 的报错指明字段")
+            } else {
+                h.fail("缺 client_secret 的错误类型不符")
+            }
+        } catch {
+            h.fail("缺 client_secret 的异常类型不符")
+        }
+
+        let searchPaths = GoogleOAuthClientLoader.defaultSearchURLs()
+        h.check(
+            searchPaths.first?.path.hasSuffix("Library/Application Support/More calendar/google_client_secret.json") == true,
+            "首选搜索路径在 Application Support，而非 App bundle"
+        )
+
+        do {
+            _ = try GoogleOAuthClientLoader.load(from: URL(fileURLWithPath: "/tmp/none-\(UUID().uuidString).json"))
+            h.fail("不存在的文件应报错")
+        } catch let error as GoogleOAuthClientError {
+            h.equal(error, .missing, "不存在的文件报 missing")
+        } catch {
+            h.fail("不存在文件的错误类型不符")
+        }
+
+        // 真机集成：凭据已安装到 Application Support 时，完整搜索链能否读到。
+        if let path = searchPaths.first, FileManager.default.fileExists(atPath: path.path) {
+            do {
+                let client = try GoogleOAuthClientLoader.load()
+                h.check(!client.clientID.isEmpty, "从 Application Support 读到真实凭据")
+                print("  CREDENTIAL: \(client.redactedSummary)")
+            } catch {
+                h.fail("读取真实凭据失败：\(error.localizedDescription)")
+            }
+        } else {
+            print("  SKIP  Application Support 下没有 google_client_secret.json（未安装）")
+        }
     }
 
     private static func runDateTests(_ h: Harness) {
