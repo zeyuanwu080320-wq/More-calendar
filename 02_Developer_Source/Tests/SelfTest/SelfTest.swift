@@ -810,6 +810,32 @@ struct SelfTest {
             h.fail("401 重试链路失败：\(error)")
         }
 
+        // URL 拼接：日历 id 里的 @ 必须只编码一次（否则 Google 回 404）
+        let urlTransport = StubGoogleTransport(responses: [
+            (200, Data("{}".utf8)),
+            (200, Data("{}".utf8))
+        ])
+        let urlAPI = GoogleAPIClient(transport: urlTransport, tokenProvider: StubGoogleTokenProvider())
+        _ = try? await urlAPI.send(
+            GoogleAPIRequest(path: "/calendars/family@group.calendar.google.com/events"),
+            as: GoogleEventsListResponse.self
+        )
+        let groupURL = urlTransport.lastRequest?.url?.absoluteString ?? ""
+        h.check(
+            groupURL.contains("calendars/family%40group.calendar.google.com/events"),
+            "日历 id 的 @ 只编码一次"
+        )
+        h.check(!groupURL.contains("%2540"), "没有二次编码（%2540）")
+
+        _ = try? await urlAPI.send(
+            GoogleAPIRequest(path: "/calendars/primary/events"),
+            as: GoogleEventsListResponse.self
+        )
+        h.check(
+            urlTransport.lastRequest?.url?.absoluteString.hasSuffix("/calendars/primary/events") == true,
+            "primary 路径原样拼接"
+        )
+
         // 刷新后仍 401：不应无限重试
         let always401 = StubGoogleTransport(responses: [(401, Data()), (401, Data())])
         let tokens2 = StubGoogleTokenProvider()

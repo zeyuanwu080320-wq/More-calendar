@@ -184,24 +184,41 @@ public actor GoogleAPIClient {
 
     private func perform(_ request: GoogleAPIRequest) async throws -> Data {
         var token = try await tokenProvider.validAccessToken()
-        var (data, response) = try await transport.send(makeURLRequest(request, token: token))
+        var urlRequest = try makeURLRequest(request, token: token)
+        // 记录**实际**发出的 URL：排查 404 时这是唯一可靠的事实来源。
+        GoogleDiagnostics.log("HTTP → \(request.method) \(urlRequest.url?.absoluteString ?? "?")")
+        var (data, response) = try await transport.send(urlRequest)
+        GoogleDiagnostics.log("HTTP ← \(response.statusCode) \(request.path)")
 
         if response.statusCode == 401 {
             // 令牌可能过期（或被用户撤销）。刷新一次再试。
+            GoogleDiagnostics.log("HTTP 401，尝试刷新令牌后重试")
             token = try await tokenProvider.forceRefreshAccessToken()
-            (data, response) = try await transport.send(makeURLRequest(request, token: token))
+            urlRequest = try makeURLRequest(request, token: token)
+            (data, response) = try await transport.send(urlRequest)
+            GoogleDiagnostics.log("HTTP ← \(response.statusCode)（重试后）")
         }
 
-        try validate(status: response.statusCode, data: data, response: response)
+        do {
+            try validate(status: response.statusCode, data: data, response: response)
+        } catch {
+            let parsed = Self.parseError(data)
+            GoogleDiagnostics.log("HTTP 失败 \(response.statusCode) reason=\(parsed.reason ?? "-") message=\(parsed.message ?? "-")")
+            throw error
+        }
         return data
     }
 
     private func makeURLRequest(_ request: GoogleAPIRequest, token: String) throws -> URLRequest {
-        let path = request.path.hasPrefix("/") ? String(request.path.dropFirst()) : request.path
-        let url = baseURL.appendingPathComponent(path)
-        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             throw GoogleAPIError.network("无法构造请求 URL")
         }
+        let relative = request.path.hasPrefix("/") ? String(request.path.dropFirst()) : request.path
+        let basePath = baseURL.path.hasSuffix("/") ? String(baseURL.path.dropLast()) : baseURL.path
+        // 用 percentEncodedPath 而不是 appendingPathComponent：后者会把 `%` 再编码一次，
+        // 使日历 id 里的 `@`（如 name@gmail.com）变成 `%2540`，Google 直接回 404。
+        // 这里对每个路径段精确编码一次，`@` → `%40`。
+        components.percentEncodedPath = basePath + "/" + Self.percentEncodedPath(relative)
         if !request.query.isEmpty {
             components.queryItems = request.query
         }
@@ -240,6 +257,15 @@ public actor GoogleAPIClient {
             let parsed = Self.parseError(data)
             throw GoogleAPIError.http(status: status, message: parsed.message ?? "未知错误")
         }
+    }
+
+    /// 逐段编码路径。只保留 unreserved 字符，其余（含 `@`、空格）一律百分号编码。
+    static func percentEncodedPath(_ path: String) -> String {
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        return path
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .map { $0.addingPercentEncoding(withAllowedCharacters: allowed) ?? String($0) }
+            .joined(separator: "/")
     }
 
     private static func retryAfter(from response: HTTPURLResponse) -> TimeInterval? {

@@ -232,6 +232,8 @@ final class AppModel: ObservableObject {
             if let match {
                 selectedGoogleCalendarID = match.id
                 selectedGoogleCalendarName = match.summary
+                // 让 Provider 与 UI 使用同一个日历，避免"界面显示 A、实际写 B"。
+                googleTarget.selectCalendar(match)
             }
         } catch {
             googleCalendars = []

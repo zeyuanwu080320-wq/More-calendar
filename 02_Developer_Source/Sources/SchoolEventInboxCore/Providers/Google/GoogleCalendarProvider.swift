@@ -122,11 +122,12 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
         do {
             let api = try api()
             let calendarID = try selectedCalendarID()
+            GoogleDiagnostics.log("saveEvents: 使用日历 id=\(calendarID) 条数=\(drafts.count)")
             for draft in drafts {
                 let body = GoogleCalendarMapper.makeEventBody(from: draft)
                 let request = try GoogleAPIRequest.json(
                     "POST",
-                    path: "/calendars/\(escape(calendarID))/events",
+                    path: "/calendars/\(calendarID)/events",
                     body: body
                 )
                 _ = try await api.send(request, as: GoogleEvent.self)
@@ -240,7 +241,7 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
         }
         do {
             let event = try await api().send(
-                GoogleAPIRequest(path: "/calendars/\(escape(parts.calendarID))/events/\(escape(parts.eventID))"),
+                GoogleAPIRequest(path: "/calendars/\(parts.calendarID)/events/\(parts.eventID)"),
                 as: GoogleEvent.self
             )
             if let parent = event.recurringEventId, !parent.isEmpty {
@@ -262,7 +263,7 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
         do {
             let request = GoogleAPIRequest(
                 method: "DELETE",
-                path: "/calendars/\(escape(parts.calendarID))/events/\(escape(parts.eventID))"
+                path: "/calendars/\(parts.calendarID)/events/\(parts.eventID)"
             )
             try await api().send(request)
             return 1
@@ -291,7 +292,7 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
                     continue
                 }
                 do {
-                    let path = "/calendars/\(escape(parts.calendarID))/events/\(escape(parts.eventID))"
+                    let path = "/calendars/\(parts.calendarID)/events/\(parts.eventID)"
                     let current = try await api.send(GoogleAPIRequest(path: path), as: GoogleEvent.self)
                     guard let body = GoogleCalendarMapper.shiftedBody(from: current, by: interval),
                           let data = try? JSONEncoder().encode(body) else {
@@ -421,7 +422,7 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
             ))
         }
         let request = GoogleAPIRequest(
-            path: "/calendars/\(escape(calendarID))/events",
+            path: "/calendars/\(calendarID)/events",
             query: query
         )
         let items = try await api.sendAllPages(
@@ -431,13 +432,6 @@ public final class GoogleCalendarProvider: ManagedEventProvider {
             nextToken: { $0.nextPageToken }
         )
         return items.filter { $0.status != "cancelled" }
-    }
-
-    /// Google 的日历 id 常含 `@`（如 `family@group.calendar.google.com`），必须转义。
-    private func escape(_ value: String) -> String {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "@:/")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     /// 把底层错误收敛成 `TargetProviderError`，避免 UI 出现第三种错误类型。
